@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -11,41 +13,54 @@ import (
 )
 
 type SignalingServer struct {
-	db          *sql.DB
-	rooms       map[string]*Room
-	roomsMu     sync.RWMutex
-	upgrader    websocket.Upgrader
-	jwtSecret   string
+	db        *sql.DB
+	rooms     map[string]*Room
+	roomsMu   sync.RWMutex
+	upgrader  websocket.Upgrader
+	jwtSecret string
 }
 
 type Room struct {
-	ID       string
-	Peers    map[string]*Peer
-	PeersMu  sync.RWMutex
+	ID        string
+	Peers     map[string]*Peer
+	PeersMu   sync.RWMutex
 	Broadcast chan *Message
 }
 
 type Peer struct {
-	ID       string
-	UserID   string
-	Conn     *websocket.Conn
-	Send     chan *Message
-	RoomID   string
+	ID     string
+	UserID string
+	Conn   *websocket.Conn
+	Send   chan *Message
+	RoomID string
 }
 
 type Message struct {
-	Type    string      `json:"type"`    // offer, answer, ice-candidate, join, leave
-	From    string      `json:"from"`
-	To      string      `json:"to,omitempty"`
-	RoomID  string      `json:"room_id,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
+	Type   string      `json:"type"` // offer, answer, ice-candidate, join, leave
+	From   string      `json:"from"`
+	To     string      `json:"to,omitempty"`
+	RoomID string      `json:"room_id,omitempty"`
+	Data   interface{} `json:"data,omitempty"`
 }
 
 func NewSignalingServer(db *sql.DB, jwtSecret string) *SignalingServer {
+	allowedOrigins := map[string]struct{}{}
+	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowedOrigins[origin] = struct{}{}
+		}
+	}
 	return &SignalingServer{
-		db:       db,
-		rooms:    make(map[string]*Room),
-		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		db:    db,
+		rooms: make(map[string]*Room),
+		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
+			if len(allowedOrigins) == 0 {
+				return false
+			}
+			_, ok := allowedOrigins[r.Header.Get("Origin")]
+			return ok
+		}},
 		jwtSecret: jwtSecret,
 	}
 }
@@ -76,6 +91,10 @@ func (s *SignalingServer) HandleWebSocket(w http.ResponseWriter, r *http.Request
 
 	if userID == "" || roomID == "" {
 		http.Error(w, "Missing user or room", http.StatusBadRequest)
+		return
+	}
+	if !s.isActiveParticipant(roomID, userID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -173,4 +192,15 @@ func (s *SignalingServer) writePump(peer *Peer) {
 			return
 		}
 	}
+}
+
+func (s *SignalingServer) isActiveParticipant(roomID, userID string) bool {
+	var exists bool
+	if err := s.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM participants WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL)",
+		roomID, userID,
+	).Scan(&exists); err != nil {
+		return false
+	}
+	return exists
 }

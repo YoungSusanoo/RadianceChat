@@ -45,10 +45,14 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add host as participant
-	h.db.Exec(
+	_, err = h.db.Exec(
 		"INSERT INTO participants (id, room_id, user_id, role) VALUES ($1, $2, $3, $4)",
 		uuid.New().String(), roomID, userID, "host",
 	)
+	if err != nil {
+		http.Error(w, "Failed to create room participant", http.StatusInternalServerError)
+		return
+	}
 
 	room := models.Room{
 		ID:         roomID,
@@ -121,7 +125,10 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	// Check if room exists
 	var exists bool
-	h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1)", roomID).Scan(&exists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1)", roomID).Scan(&exists); err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 	if !exists {
 		http.Error(w, "Room not found", http.StatusNotFound)
 		return
@@ -129,7 +136,10 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	// Check if user already in room
 	var activeCount int
-	h.db.QueryRow("SELECT COUNT(*) FROM participants WHERE room_id = $1 AND left_at IS NULL", roomID).Scan(&activeCount)
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM participants WHERE room_id = $1 AND left_at IS NULL", roomID).Scan(&activeCount); err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 	if activeCount >= 5 {
 		http.Error(w, "Room is full", http.StatusBadRequest)
 		return
