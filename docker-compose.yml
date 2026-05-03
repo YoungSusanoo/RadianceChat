@@ -1,32 +1,45 @@
 services:
-  postgres:
-    image: postgres:17-alpine
+  db:
+    image: postgres:15-alpine
+    container_name: radiance_db
+    restart: always
     environment:
-      POSTGRES_DB: radiance
-      POSTGRES_PASSWORD: radiance
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - radiance_net
 
   app:
     build: .
-    environment:
-      DATABASE_URL: postgres://postgres:radiance@postgres:5432/radiance?sslmode=disable
-      JWT_SECRET: dev-secret-key-change-in-production-min-32-chars
-      PORT: 8080
-    ports:
-      - "8080:8080"
+    container_name: radiance_backend
+    env_file:
+      - .env
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
-    volumes:
-      - ./db/migrations.sql:/app/db/migrations.sql
+    networks:
+      - radiance_net
 
-volumes:
-  postgres_data:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: radiance_frontend
+    ports:
+      - "8081:80"
+    depends_on:
+      - app
+    networks:
+      - radiance_net
+
+networks:
+  radiance_net:
+    driver: bridge
