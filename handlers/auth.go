@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -23,9 +26,36 @@ func NewAuthHandler(db *sql.DB, jwtSecret string) *AuthHandler {
 	return &AuthHandler{db: db, jwtSecret: jwtSecret}
 }
 
-func hashPassword(password string) string {
-	hash := sha256.Sum256([]byte(password))
-	return hex.EncodeToString(hash[:])
+func hashPassword(password string) (string, error) {
+	saltBytes := make([]byte, 16)
+	if _, err := rand.Read(saltBytes); err != nil {
+		return "", err
+	}
+	salt := base64.StdEncoding.EncodeToString(saltBytes)
+	hash := sha256Hex(salt + ":" + password)
+	return fmt.Sprintf("%s$%s", salt, hash), nil
+}
+
+func sha256Hex(input string) string {
+	sum := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(sum[:])
+}
+
+func verifyPassword(stored, password string) bool {
+	parts := strings.Split(stored, "$")
+	if len(parts) != 2 {
+		return false
+	}
+	expected := sha256Hex(parts[0] + ":" + password)
+	return expected == parts[1]
+}
+
+func (h *AuthHandler) hashAndStorePassword(password string) (string, error) {
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return "", err
+	}
+	return passwordHash, nil
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +71,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := uuid.New().String()
-	passwordHash := hashPassword(req.Password)
+	passwordHash, err := h.hashAndStorePassword(req.Password)
+	if err != nil {
+		http.Error(w, "Failed to process password", http.StatusInternalServerError)
+		return
+	}
 	username := strings.Split(req.Email, "@")[0]
 
-	_, err := h.db.Exec(
+	_, err = h.db.Exec(
 		"INSERT INTO users (id, username, email, password_hash, status) VALUES ($1, $2, $3, $4, $5)",
 		userID, username, req.Email, passwordHash, "offline",
 	)
@@ -94,7 +128,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if hashPassword(req.Password) != passwordHash {
+	if !verifyPassword(passwordHash, req.Password) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}

@@ -27,6 +27,10 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	roomID := r.PathValue("id")
+	if !h.isActiveParticipant(roomID, userID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 
 	var req models.SendMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -51,7 +55,10 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var username string
-	h.db.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&username)
+	if err := h.db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&username); err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 
 	message := models.Message{
 		ID:        messageID,
@@ -70,6 +77,15 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	roomID := r.PathValue("id")
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !h.isActiveParticipant(roomID, userID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -86,7 +102,7 @@ func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.Query(
-		"SELECT m.id, m.room_id, m.user_id, m.content, m.created_at, m.is_edited, m.is_deleted, u.email FROM messages m JOIN users u ON m.user_id = u.id WHERE m.room_id = $1 AND m.is_deleted = false ORDER BY m.created_at DESC LIMIT $2 OFFSET $3",
+		"SELECT m.id, m.room_id, m.user_id, m.content, m.created_at, m.is_edited, m.is_deleted, u.username FROM messages m JOIN users u ON m.user_id = u.id WHERE m.room_id = $1 AND m.is_deleted = false ORDER BY m.created_at DESC LIMIT $2 OFFSET $3",
 		roomID, limit, offset,
 	)
 	if err != nil {
@@ -107,4 +123,15 @@ func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(messages)
+}
+
+func (h *ChatHandler) isActiveParticipant(roomID, userID string) bool {
+	var exists bool
+	if err := h.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM participants WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL)",
+		roomID, userID,
+	).Scan(&exists); err != nil {
+		return false
+	}
+	return exists
 }
