@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
+	"bufio"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"radiance/config"
 	"radiance/db"
@@ -14,7 +15,7 @@ import (
 
 func init() {
 	if err := loadEnv(); err != nil {
-		log.Printf("Warning: could not load .env file: %v", err)
+		log.Printf("Note: No .env file found (OK in Docker), using environment variables")
 	}
 }
 
@@ -25,11 +26,24 @@ func loadEnv() error {
 	}
 	defer file.Close()
 
-	scanner := os.Environ()
-	for _, env := range scanner {
-		os.Setenv(env[:len(env)], env)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		os.Setenv(key, value)
 	}
-	return nil
+
+	return scanner.Err()
 }
 
 func main() {
@@ -75,8 +89,11 @@ func main() {
 
 	mux.Handle("/signaling", authHandler.AuthMiddleware(http.HandlerFunc(signalingServer.HandleWebSocket)))
 
-	fmt.Printf("🎙️  Radiance server running on http://localhost:%s\n", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
+	addr := ":" + cfg.Port
+	log.Printf("🎙️  Radiance server starting on http://localhost:%s", cfg.Port)
+	log.Printf("Database: %s", cfg.DatabaseURL)
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

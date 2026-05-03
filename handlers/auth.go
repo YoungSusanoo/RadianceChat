@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"radiance/middleware"
 	"radiance/models"
@@ -41,10 +42,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	userID := uuid.New().String()
 	passwordHash := hashPassword(req.Password)
+	username := strings.Split(req.Email, "@")[0]
 
 	_, err := h.db.Exec(
-		"INSERT INTO users (id, email, password_hash, status) VALUES ($1, $2, $3, $4)",
-		userID, req.Email, passwordHash, "offline",
+		"INSERT INTO users (id, username, email, password_hash, status) VALUES ($1, $2, $3, $4, $5)",
+		userID, username, req.Email, passwordHash, "offline",
 	)
 	if err != nil {
 		http.Error(w, "User already exists", http.StatusConflict)
