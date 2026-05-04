@@ -1,43 +1,60 @@
 <!DOCTYPE html>
 <html lang="ru">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Radiance Chat</title>
   <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
   <div class="container">
     <h1>Radiance 🎙️</h1>
-    <p class="subtitle">Присоединяйтесь к серверу</p>
 
-    <div class="card">
-      <form id="authForm">
-        <div class="input-group">
-          <label for="email">Email</label>
-          <input type="email" id="email" required placeholder="Введите email" autocomplete="email">
-        </div>
+    <section id="authSection" class="card">
+      <h2>Вход</h2>
+      <div class="input-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" required placeholder="Введите email" autocomplete="email">
+      </div>
+      <div class="input-group">
+        <label for="password">Пароль</label>
+        <input type="password" id="password" required placeholder="Введите пароль" autocomplete="current-password">
+      </div>
+      <div class="button-group">
+        <button type="button" id="loginBtn" class="btn primary">Войти</button>
+        <button type="button" id="registerBtn" class="btn secondary">Регистрация</button>
+      </div>
+    </section>
 
-        <div class="input-group">
-          <label for="password">Пароль</label>
-          <input type="password" id="password" required placeholder="Введите пароль">
-        </div>
-
+    <section id="appSection" class="hidden">
+      <div class="card">
+        <h2>Комнаты</h2>
+        <div class="input-group"><input id="roomName" placeholder="Название комнаты"></div>
         <div class="button-group">
-          <button type="button" id="loginBtn" class="btn primary">Войти</button>
-          <button type="button" id="registerBtn" class="btn secondary">Регистрация</button>
+          <button type="button" id="createRoomBtn" class="btn primary">Создать</button>
+          <button type="button" id="refreshRoomsBtn" class="btn secondary">Обновить</button>
         </div>
-      </form>
-    </div>
+        <div class="input-group"><input id="inviteCode" placeholder="Invite code"></div>
+        <button type="button" id="joinByInviteBtn" class="btn secondary">Войти по invite</button>
+        <ul id="roomsList"></ul>
+      </div>
 
-    <div id="server-response" class="response-box hidden">
-      <!-- Здесь будут ответы от Go-бэкенда -->
-    </div>
+      <div class="card">
+        <h2>Текущая комната: <span id="currentRoomName">-</span></h2>
+        <p>Invite: <code id="currentInvite">-</code></p>
+        <div class="button-group">
+          <button type="button" id="loadMessagesBtn" class="btn secondary">Обновить чат</button>
+          <button type="button" id="leaveRoomBtn" class="btn secondary">Выйти</button>
+          <button type="button" id="deleteRoomBtn" class="btn secondary">Удалить комнату</button>
+        </div>
+        <ul id="messagesList"></ul>
+        <div class="input-group"><input id="messageInput" placeholder="Сообщение"></div>
+        <button type="button" id="sendMessageBtn" class="btn primary">Отправить</button>
+      </div>
+    </section>
+
+    <div id="server-response" class="response-box hidden"></div>
   </div>
-
   <script src="app.js"></script>
 </body>
-
 </html>

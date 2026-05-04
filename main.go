@@ -81,8 +81,10 @@ func main() {
 	mux.Handle("GET /auth/me", authHandler.AuthMiddleware(http.HandlerFunc(authHandler.GetMe)))
 	mux.Handle("POST /rooms", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.CreateRoom)))
 	mux.Handle("POST /rooms/{id}/join", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.JoinRoom)))
+	mux.Handle("POST /rooms/join/{invite}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.JoinByInvite)))
 	mux.Handle("POST /rooms/{id}/leave", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.LeaveRoom)))
 	mux.Handle("GET /rooms/{id}/participants", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.GetParticipants)))
+	mux.Handle("DELETE /rooms/{id}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.DeleteRoom)))
 
 	mux.Handle("GET /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.GetMessages)))
 	mux.Handle("POST /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.SendMessage)))

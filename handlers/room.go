@@ -210,3 +210,59 @@ func (h *RoomHandler) GetParticipants(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(participants)
 }
+
+func (h *RoomHandler) JoinByInvite(w http.ResponseWriter, r *http.Request) {
+	invite := r.PathValue("invite")
+	if invite == "" {
+		http.Error(w, "Invite required", http.StatusBadRequest)
+		return
+	}
+
+	var roomID string
+	err := h.db.QueryRow("SELECT id FROM rooms WHERE invite_link = $1 AND status = 'active'", invite).Scan(&roomID)
+	if err == sql.ErrNoRows {
+		http.Error(w, "Invite not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	r.SetPathValue("id", roomID)
+	h.JoinRoom(w, r)
+}
+
+func (h *RoomHandler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	roomID := r.PathValue("id")
+	var hostID string
+	err := h.db.QueryRow("SELECT host_id FROM rooms WHERE id = $1", roomID).Scan(&hostID)
+	if err == sql.ErrNoRows {
+		http.Error(w, "Room not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	if hostID != userID {
+		http.Error(w, "Only host can delete room", http.StatusForbidden)
+		return
+	}
+
+	_, err = h.db.Exec("UPDATE rooms SET status = 'ended', ended_at = NOW() WHERE id = $1", roomID)
+	if err != nil {
+		http.Error(w, "Failed to delete room", http.StatusInternalServerError)
+		return
+	}
+	_, _ = h.db.Exec("UPDATE participants SET left_at = NOW() WHERE room_id = $1 AND left_at IS NULL", roomID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
