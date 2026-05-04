@@ -6,7 +6,7 @@ if (!window.location.protocol.startsWith('http')) {
 
 const loginBtn = document.getElementById('loginBtn');
 const registerBtn = document.getElementById('registerBtn');
-const usernameInput = document.getElementById('username');
+const emailInput = document.getElementById('email');
 const passwordInput = document.getElementById('password');
 const responseBox = document.getElementById('server-response');
 
@@ -16,12 +16,23 @@ function showResponse(data, isError = false) {
     responseBox.textContent = JSON.stringify(data, null, 2);
 }
 
+async function parseResponse(response) {
+    const text = await response.text();
+    if (!text) return {};
+
+    try {
+        return JSON.parse(text);
+    } catch {
+        return { error: text.trim() || 'Некорректный ответ сервера' };
+    }
+}
+
 async function sendRequest(endpoint) {
-    const username = usernameInput.value.trim();
+    const email = emailInput.value.trim();
     const password = passwordInput.value;
 
-    if (!username || !password) {
-        showResponse({ error: 'Пожалуйста, введите логин и пароль' }, true);
+    if (!email || !password) {
+        showResponse({ error: 'Пожалуйста, введите email и пароль' }, true);
         return;
     }
 
@@ -31,10 +42,10 @@ async function sendRequest(endpoint) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ email, password })
         });
 
-        const data = await response.json().catch(() => ({ error: 'Некорректный ответ сервера' }));
+        const data = await parseResponse(response);
 
         if (!response.ok) {
             throw new Error(data.error || `Ошибка сервера (${response.status})`);
