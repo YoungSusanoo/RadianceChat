@@ -116,9 +116,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	var passwordHash string
 	err := h.db.QueryRow(
-		"SELECT id, email, password_hash, status FROM users WHERE email = $1",
-		req.Email,
-	).Scan(&user.ID, &user.Email, &passwordHash, &user.Status)
+    		"SELECT id, username, email, password_hash FROM users WHERE email = $1", 
+    		req.Email,
+	).Scan(&user.ID, &user.Username, &user.Email, &passwordHash)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
@@ -178,26 +178,22 @@ func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        authHeader := r.Header.Get("Authorization")
+        token, err := middleware.ExtractToken(authHeader)
+        if err != nil {
+            http.Error(w, "Unauthorized", http.StatusUnauthorized)
+            return
+        }
 
-		token, err := middleware.ExtractToken(authHeader)
-		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+        claims, err := middleware.VerifyToken(token, h.jwtSecret)
+        if err != nil {
+            http.Error(w, "Invalid token", http.StatusUnauthorized)
+            return
+        }
 
-		claims, err := middleware.VerifyToken(token, h.jwtSecret)
-		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		r.Header.Set("X-User-ID", claims.UserID)
-		next.ServeHTTP(w, r)
-	})
+        // Передаем UserID в заголовок для Handler-ов
+        r.Header.Set("X-User-ID", claims.UserID)
+        next.ServeHTTP(w, r)
+    })
 }

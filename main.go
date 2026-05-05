@@ -47,84 +47,87 @@ func loadEnv() error {
 }
 
 func main() {
+	// 1. Загрузка конфигурации
 	cfg := config.Load()
 
+	// 2. Подключение к БД
 	database, err := db.Connect(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer database.Close()
 
+	// 3. Запуск миграций
 	migrationSQL, err := os.ReadFile("db/migrations.sql")
 	if err != nil {
-		log.Fatalf("Failed to read migrations: %v", err)
+		log.Printf("Warning: Could not read migrations.sql: %v", err)
+	} else {
+		if err := db.InitDB(database, string(migrationSQL)); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
 	}
 
-	if err := db.InitDB(database, string(migrationSQL)); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
-	}
-
+	// 4. Инициализация обработчиков
 	authHandler := handlers.NewAuthHandler(database, cfg.JWTSecret)
 	roomHandler := handlers.NewRoomHandler(database)
 	chatHandler := handlers.NewChatHandler(database)
 	signalingServer := signaling.NewSignalingServer(database, cfg.JWTSecret)
 
+	// 5. Настройка роутера
 	mux := http.NewServeMux()
 
-	// Public routes
+	// --- Публичные маршруты ---
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
-	mux.HandleFunc("GET /rooms", roomHandler.ListRooms)
-	mux.HandleFunc("GET /rooms/{id}", roomHandler.GetRoom)
 
-	// Protected routes (temporarily without auth for testing)
-	// mux.Handle("GET /auth/me", authHandler.AuthMiddleware(http.HandlerFunc(authHandler.GetMe)))
-	// mux.Handle("POST /rooms", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.CreateRoom)))
-	// mux.Handle("POST /rooms/{id}/join", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.JoinRoom)))
-	// mux.Handle("POST /invites/{invite}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.JoinByInvite)))
-	// mux.Handle("POST /rooms/{id}/leave", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.LeaveRoom)))
-	// mux.Handle("GET /rooms/{id}/participants", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.GetParticipants)))
-	// mux.Handle("DELETE /rooms/{id}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.DeleteRoom)))
+	// --- Защищенные маршруты (требуют JWT) ---
+	// Оборачиваем роуты, требующие авторизации, в AuthMiddleware
+	
+	// Профиль пользователя
+	mux.Handle("GET /auth/me", authHandler.AuthMiddleware(http.HandlerFunc(authHandler.GetMe)))
 
-	// mux.Handle("GET /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.GetMessages)))
-	// mux.Handle("POST /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.SendMessage)))
+	// Работа с комнатами
+	mux.Handle("POST /rooms", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.CreateRoom)))
+	mux.Handle("GET /rooms", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.ListRooms)))
+	mux.Handle("POST /rooms/{id}/join", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.JoinRoom)))
+	mux.Handle("POST /rooms/{id}/leave", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.LeaveRoom)))
+	mux.Handle("DELETE /rooms/{id}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.DeleteRoom)))
+	mux.Handle("GET /rooms/{id}/participants", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.GetParticipants)))
+	mux.Handle("POST /invites/{invite}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.JoinByInvite)))
 
-	// mux.Handle("/signaling", authHandler.AuthMiddleware(http.HandlerFunc(signalingServer.HandleWebSocket)))
-
-	// Temporary public routes for testing
-	mux.HandleFunc("GET /auth/me", authHandler.GetMe)
-	mux.HandleFunc("POST /rooms", roomHandler.CreateRoom)
-	mux.HandleFunc("POST /rooms/{id}/join", roomHandler.JoinRoom)
-	mux.HandleFunc("POST /invites/{invite}", roomHandler.JoinByInvite)
-	mux.HandleFunc("POST /rooms/{id}/leave", roomHandler.LeaveRoom)
-	mux.HandleFunc("GET /rooms/{id}/participants", roomHandler.GetParticipants)
-	mux.HandleFunc("DELETE /rooms/{id}", roomHandler.DeleteRoom)
-
-	mux.HandleFunc("GET /rooms/{id}/messages", chatHandler.GetMessages)
-	mux.HandleFunc("POST /rooms/{id}/messages", chatHandler.SendMessage)
+	// Чат
+	mux.Handle("GET /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.GetMessages)))
+	mux.Handle("POST /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.SendMessage)))
 
 	mux.HandleFunc("/signaling", signalingServer.HandleWebSocket)
+	mux.Handle("GET /rooms/{id}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.GetRoom)))
 
+	// 6. Запуск сервера
 	addr := ":" + cfg.Port
 	log.Printf("🎙️  Radiance server starting on http://localhost:%s", cfg.Port)
-	log.Printf("Database: %s", cfg.DatabaseURL)
+	log.Printf("Database status: Connected")
 
+	// Оборачиваем весь mux в CORS для работы с фронтендом
 	if err := http.ListenAndServe(addr, withCORS(mux)); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
 
+// withCORS добавляет необходимые заголовки для взаимодействия с фронтендом
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 
 		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-User-ID")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

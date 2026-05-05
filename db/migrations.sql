@@ -1,4 +1,4 @@
--- Users table
+
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 
--- Rooms table
+
 CREATE TABLE IF NOT EXISTS rooms (
     id UUID PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_rooms_host_id ON rooms(host_id);
 CREATE INDEX IF NOT EXISTS idx_rooms_status ON rooms(status);
 CREATE INDEX IF NOT EXISTS idx_rooms_invite_link ON rooms(invite_link);
 
--- Participants table
+
 CREATE TABLE IF NOT EXISTS participants (
     id UUID PRIMARY KEY,
     room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

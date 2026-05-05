@@ -219,6 +219,13 @@ body {
   list-style: none;
 }
 
+#appScreen {
+    background-color: #1a1a2e;
+    min-height: 100vh;
+    color: white;
+    padding: 20px;
+}
+
 .room-item {
   padding: 12px;
   margin-bottom: 8px;
