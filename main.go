@@ -99,9 +99,6 @@ func main() {
 	mux.Handle("GET /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.GetMessages)))
 	mux.Handle("POST /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.SendMessage)))
 
-	// Сигналинг (WebSocket)
-	// Для WebSocket авторизация обычно происходит внутри (через параметры запроса или протокол)
-	// но мы оставляем его здесь. signalingServer сам проверяет токены внутри HandleWebSocket.
 	mux.HandleFunc("/signaling", signalingServer.HandleWebSocket)
 
 	// 6. Запуск сервера

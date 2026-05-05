@@ -34,7 +34,7 @@ type Peer struct {
 }
 
 type Message struct {
-	Type   string      `json:"type"` // offer, answer, ice-candidate, join, leave
+	Type   string      `json:"type"` // offer, answer, candidate, join, leave
 	From   string      `json:"from"`
 	To     string      `json:"to,omitempty"`
 	RoomID string      `json:"room_id,omitempty"`
@@ -45,9 +45,11 @@ func NewSignalingServer(db *sql.DB, jwtSecret string) *SignalingServer {
 	return &SignalingServer{
 		db:    db,
 		rooms: make(map[string]*Room),
-		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
-			return true // Allow all origins for testing
-		}},
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true // Разрешаем все домены для разработки
+			},
+		},
 		jwtSecret: jwtSecret,
 	}
 }
@@ -73,17 +75,27 @@ func (s *SignalingServer) getOrCreateRoom(roomID string) *Room {
 }
 
 func (s *SignalingServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	userID := r.Header.Get("X-User-ID")
-	if userID == "" {
-		userID = uuid.New().String() // Generate temp user ID
-	}
+	// 1. Извлекаем параметры из URL
+	token := r.URL.Query().Get("token")
 	roomID := r.URL.Query().Get("room")
+	userID := r.URL.Query().Get("user_id")
 
-	if roomID == "" {
-		http.Error(w, "Missing room", http.StatusBadRequest)
+	// 2. Если userID пустой, пытаемся взять из заголовка или генерируем новый
+	if userID == "" {
+		userID = r.Header.Get("X-User-ID")
+		if userID == "" {
+			userID = uuid.New().String()
+		}
+	}
+
+	// 3. Валидация (предотвращает ошибку 400 Bad Request на фронтенде)
+	if roomID == "" || token == "" {
+		log.Printf("WebSocket connection rejected: missing room (%s) or token", roomID)
+		http.Error(w, "Missing room or token", http.StatusBadRequest)
 		return
 	}
 
+	// 4. Апгрейд до WebSocket
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
@@ -101,16 +113,19 @@ func (s *SignalingServer) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		RoomID: roomID,
 	}
 
+	// Регистрируем пира в комнате
 	room.PeersMu.Lock()
 	room.Peers[peerID] = peer
 	room.PeersMu.Unlock()
 
-	// Notify others about join
+	// Уведомляем остальных о входе
 	room.Broadcast <- &Message{
 		Type:   "join",
 		From:   peerID,
 		RoomID: roomID,
 	}
+
+	log.Printf("User %s connected to room %s as peer %s", userID, roomID, peerID)
 
 	go s.handlePeer(peer, room)
 	go s.writePump(peer)
@@ -127,28 +142,30 @@ func (s *SignalingServer) handlePeer(peer *Peer, room *Room) {
 			From:   peer.ID,
 			RoomID: room.ID,
 		}
-
 		peer.Conn.Close()
+		log.Printf("Peer %s disconnected from room %s", peer.ID, room.ID)
 	}()
 
 	for {
 		var msg Message
 		if err := peer.Conn.ReadJSON(&msg); err != nil {
-			return
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("WebSocket error: %v", err)
+			}
+			break
 		}
 
 		msg.From = peer.ID
 		msg.RoomID = room.ID
 
+		// Если указан конкретный получатель (To), шлем ему. Иначе — всем в комнате.
 		if msg.To != "" {
-			// Direct message to specific peer
 			room.PeersMu.RLock()
 			if target, exists := room.Peers[msg.To]; exists {
 				target.Send <- &msg
 			}
 			room.PeersMu.RUnlock()
 		} else {
-			// Broadcast to all
 			room.Broadcast <- &msg
 		}
 	}
@@ -158,11 +175,12 @@ func (s *SignalingServer) broadcastLoop(room *Room) {
 	for msg := range room.Broadcast {
 		room.PeersMu.RLock()
 		for _, peer := range room.Peers {
+			// Не шлем сообщение самому себе
 			if peer.ID != msg.From {
 				select {
 				case peer.Send <- msg:
 				default:
-					log.Printf("Failed to send to peer %s", peer.ID)
+					log.Printf("Buffer full for peer %s, skipping message", peer.ID)
 				}
 			}
 		}
@@ -178,15 +196,4 @@ func (s *SignalingServer) writePump(peer *Peer) {
 			return
 		}
 	}
-}
-
-func (s *SignalingServer) isActiveParticipant(roomID, userID string) bool {
-	var exists bool
-	if err := s.db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM participants WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL)",
-		roomID, userID,
-	).Scan(&exists); err != nil {
-		return false
-	}
-	return exists
 }
