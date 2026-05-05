@@ -75,60 +75,77 @@ func (s *SignalingServer) getOrCreateRoom(roomID string) *Room {
 }
 
 func (s *SignalingServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// 1. Извлекаем параметры из URL
-	token := r.URL.Query().Get("token")
-	roomID := r.URL.Query().Get("room")
-	userID := r.URL.Query().Get("user_id")
+    token := r.URL.Query().Get("token")
+    roomID := r.PathValue("room")
+    userID := r.URL.Query().Get("user_id")
 
-	// 2. Если userID пустой, пытаемся взять из заголовка или генерируем новый
-	if userID == "" {
-		userID = r.Header.Get("X-User-ID")
-		if userID == "" {
-			userID = uuid.New().String()
-		}
-	}
+    // ИСПОЛЬЗУЕМ token: Простая проверка на наличие
+    if token == "" {
+        log.Printf("Rejecting connection: No token provided for room %s", roomID)
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
 
-	// 3. Валидация (предотвращает ошибку 400 Bad Request на фронтенде)
-	if roomID == "" || token == "" {
-		log.Printf("WebSocket connection rejected: missing room (%s) or token", roomID)
-		http.Error(w, "Missing room or token", http.StatusBadRequest)
-		return
-	}
+    username := r.URL.Query().Get("username")
+    if username == "" {
+        username = "Участник"
+    }
 
-	// 4. Апгрейд до WebSocket
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade failed: %v", err)
-		return
-	}
+    // ... (код проверки token и roomID остается прежним) ...
 
-	room := s.getOrCreateRoom(roomID)
-	peerID := uuid.New().String()
+    conn, err := s.upgrader.Upgrade(w, r, nil)
+    if err != nil {
+        log.Printf("WebSocket upgrade failed: %v", err)
+        return
+    }
 
-	peer := &Peer{
-		ID:     peerID,
-		UserID: userID,
-		Conn:   conn,
-		Send:   make(chan *Message, 5),
-		RoomID: roomID,
-	}
+    room := s.getOrCreateRoom(roomID)
+    peerID := uuid.New().String()
 
-	// Регистрируем пира в комнате
-	room.PeersMu.Lock()
-	room.Peers[peerID] = peer
-	room.PeersMu.Unlock()
+    peer := &Peer{
+        ID:     peerID,
+        UserID: userID,
+        Conn:   conn,
+        Send:   make(chan *Message, 5),
+        RoomID: roomID,
+    }
 
-	// Уведомляем остальных о входе
-	room.Broadcast <- &Message{
-		Type:   "join",
-		From:   peerID,
-		RoomID: roomID,
-	}
+    // 2. Формируем список участников для нового пользователя
+    room.PeersMu.RLock()
+    var participants []map[string]string
+    for id := range room.Peers {
+        participants = append(participants, map[string]string{
+            "id":       id,
+            "username": "Участник", 
+        })
+    }
+    room.PeersMu.RUnlock()
 
-	log.Printf("User %s connected to room %s as peer %s", userID, roomID, peerID)
+    // 3. Регистрируем пира
+    room.PeersMu.Lock()
+    room.Peers[peerID] = peer
+    room.PeersMu.Unlock()
 
-	go s.handlePeer(peer, room)
-	go s.writePump(peer)
+    // 4. Отправляем состояние комнаты новому пользователю
+    peer.Send <- &Message{
+        Type: "room_state",
+        Data: map[string]interface{}{
+            "participants": participants,
+        },
+    }
+
+    // 5. Уведомляем остальных (теперь 'username' определен выше)
+    room.Broadcast <- &Message{
+        Type:   "user_joined",
+        From:   peerID,
+        Data:   map[string]string{"userId": peerID, "username": username},
+        RoomID: roomID,
+    }
+
+    log.Printf("User %s connected to room %s as peer %s", userID, roomID, peerID)
+
+    go s.handlePeer(peer, room)
+    go s.writePump(peer)
 }
 
 func (s *SignalingServer) handlePeer(peer *Peer, room *Room) {

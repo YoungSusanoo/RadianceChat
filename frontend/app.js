@@ -8,13 +8,15 @@ let localStream = null;
 let isMicOn = false;
 let socket = null;
 let peerConnection = null;
+let activeParticipants = new Map();
 
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const getToken = () => localStorage.getItem(tokenKey);
 const setToken = (token) => localStorage.setItem(tokenKey, token);
 const setUserId = (id) => localStorage.setItem(userIdKey, id);
 
-
+const micBtn = document.getElementById('toggleMicBtn') || document.getElementById('toggleAudioBtn');
+const videoBtn = document.getElementById('toggleVideoBtn');
 const getEl = (id) => document.getElementById(id);
 const joinByInviteBtn = getEl('joinByInviteBtn');
 if (joinByInviteBtn) {
@@ -202,47 +204,70 @@ async function joinRoom(roomId) {
     }
 }
 
-function connectSocket(token, roomId) { 
-    if (socket) socket.close();
+async function connectSocket(token, roomId) {
 
-    const userId = localStorage.getItem('radiance_user_id'); // Берем ID пользователя
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    
-
-    const wsUrl = `${protocol}//${window.location.host}/api/signaling?token=${token}&room=${roomId}&user_id=${userId}`;
-    
-    console.log("Попытка подключения к:", wsUrl);
-    socket = new WebSocket(wsUrl);
+    const url = `${protocol}//${window.location.host}/ws/chat/${roomId}/?token=${token}&username=${encodeURIComponent(currentUser?.username || 'User')}`;
+    socket = new WebSocket(`${protocol}//${window.location.host}/ws/chat/${roomId}/?token=${token}`);
 
     socket.onopen = () => {
-        console.log("WebSocket успешно подключен к комнате:", roomId);
+        console.log("Connected to WebSocket");
+        showNotification("Соединение установлено");
     };
 
     socket.onmessage = async (event) => {
         const msg = JSON.parse(event.data);
+        
         switch (msg.type) {
-            case 'offer': 
-                await handleOffer(msg); 
+            case 'room_state':
+    		activeParticipants.clear();
+    		const parts = msg.data.participants || [];
+    		parts.forEach(p => activeParticipants.set(p.id, p.username));
+    		updateParticipantList();
+    		break;
+
+            case 'user_joined':
+                activeParticipants.set(msg.userId, msg.username);
+                updateParticipantList();
                 break;
-            case 'answer': 
+
+            case 'user_left':
+                activeParticipants.delete(msg.userId);
+                updateParticipantList();
+                removeRemoteVideo(msg.userId);
+                break;
+
+            case 'offer':
+                await handleOffer(msg);
+                break;
+
+            case 'answer':
                 if (peerConnection) {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.data));
                 }
                 break;
-            case 'candidate': 
+
+            case 'candidate':
                 if (peerConnection && msg.data) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(msg.data)); 
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(msg.data));
+                    } catch (e) {
+                        console.error("Error adding ice candidate", e);
+                    }
                 }
-               break;
+                break;
+
+            case 'chat_message':
+                appendMessage(msg);
+                break;
         }
     };
 
-    socket.onerror = (error) => {
-        console.error("Ошибка WebSocket:", error);
-        showNotification('Ошибка связи с сервером', 'error');
+    socket.onclose = () => {
+        showNotification("Соединение потеряно", "error");
+        setTimeout(() => connectSocket(token, roomId), 3000); // Реконнект
     };
 }
-
 async function createRoom() {
     const name = elements.roomNameInput?.value.trim();
     if (!name) return;
@@ -298,24 +323,22 @@ if (elements.createRoomBtn) elements.createRoomBtn.onclick = createRoom;
 if (elements.logoutBtn) elements.logoutBtn.onclick = logout;
 
 async function toggleMic() {
-    try {
-        if (!localStream) {
-            // Запрашиваем доступ к микрофону, если еще нет потока
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            isMicOn = true;
-            showNotification('Микрофон включен');
-        } else {
-            // Переключаем активность аудио-дорожки
-            isMicOn = !isMicOn;
-            localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
-            showNotification(isMicOn ? 'Микрофон включен' : 'Микрофон выключен');
-        }
+    if (!localStream) return;
+    const audioTrack = localStream.getAudioTracks()[0];
+    if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        micBtn.classList.toggle('active', !audioTrack.enabled);
+        micBtn.querySelector('i').className = audioTrack.enabled ? 'fas fa-microphone' : 'fas fa-microphone-slash';
+    }
+}
 
-        // Визуальное обновление кнопки
-        elements.toggleMicBtn?.classList.toggle('active', isMicOn);
-    } catch (err) {
-        console.error("Ошибка доступа к микрофону:", err);
-        showNotification('Нет доступа к микрофону', 'error');
+async function toggleVideo() {
+    if (!localStream) return;
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        videoBtn.classList.toggle('active', !videoTrack.enabled);
+        videoBtn.querySelector('i').className = videoTrack.enabled ? 'fas fa-video' : 'fas fa-video-slash';
     }
 }
 
@@ -418,7 +441,6 @@ async function sendMessage() {
     }
 }
 
-// Вспомогательная функция для отрисовки сообщения в списке
 function appendMessage(msg) {
     if (!elements.messagesList) return;
     
@@ -435,10 +457,9 @@ function appendMessage(msg) {
     elements.messagesList.scrollTop = elements.messagesList.scrollHeight;
 }
 
-// Привязка к кнопке
+
 if (elements.sendMessageBtn) elements.sendMessageBtn.onclick = sendMessage;
 
-// Отправка по Enter
 elements.messageInput?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendMessage();
 });
@@ -448,58 +469,61 @@ async function startCall() {
 
     peerConnection = new RTCPeerConnection(rtcConfig);
     
-    if (!localStream) {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    }
+    // Получаем аудио/видео
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-    	return showNotification('Ошибка связи с сервером. Попробуйте обновить страницу.', 'error');
-    }
-    // Слушаем собеседника
+    // Настраиваем локальное превью
+    const localVideo = getEl('local-video');
+    if (localVideo) localVideo.srcObject = localStream;
+
     peerConnection.ontrack = (event) => {
-        const audio = new Audio();
-        audio.srcObject = event.streams[0];
-        audio.play();
+        // Здесь мы добавляем видео собеседника
+        // В реальном приложении ID пользователя передается через WebSocket
+        addRemoteVideo(event.streams[0], 'remote-user', 'Собеседник');
     };
 
-    // Отправка ICE-кандидатов
     peerConnection.onicecandidate = (event) => {
-        if (event.candidate && socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({
-                type: 'candidate',
-                room_id: currentRoom,
-                candidate: event.candidate
-            }));
+        if (event.candidate && socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'candidate', room_id: currentRoom, data: event.candidate }));
         }
     };
 
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-
-    socket.send(JSON.stringify({
-        type: 'offer',
-        room_id: currentRoom,
-        data: offer
-    }));
+    socket.send(JSON.stringify({ type: 'offer', room_id: currentRoom, data: offer }));
 }
 
-async function handleOffer(message) {
-    if (!message.data) return;
+function updateParticipantList() {
+    const list = document.getElementById('participant-list');
+    const count = document.getElementById('participant-count');
+    if (!list || !count) return;
+    
+    list.innerHTML = '<li id="list-local">Вы</li>';
+    
+    activeParticipants.forEach((username, userId) => {
+        const li = document.createElement('li');
+        li.id = `list-user-${userId}`;
+        li.innerText = username;
+        list.appendChild(li);
+    });
 
-    peerConnection = new RTCPeerConnection(rtcConfig);
+    count.innerText = activeParticipants.size + 1;
+}
 
-    // 1. Добавляем свой микрофон в соединение
-    if (!localStream) {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+async function handleOffer(msg) {
+    if (!peerConnection) {
+        peerConnection = new RTCPeerConnection(rtcConfig);
+        setupPeerListeners(msg.from); // msg.from — это ID приславшего оффер
     }
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    // 2. Настраиваем обработчики (такие же, как в startCall)
+    if (localStream) {
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    }
+
     peerConnection.ontrack = (event) => {
-        const audio = new Audio();
-        audio.srcObject = event.streams[0];
-        audio.play();
+        // Берем ID из сообщения офера
+        addRemoteVideo(event.streams[0], msg.userId || 'remote', 'Участник');
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -507,21 +531,45 @@ async function handleOffer(message) {
             socket.send(JSON.stringify({
                 type: 'candidate',
                 room_id: currentRoom,
-                data: event.candidate // Используем поле 'data'
+                data: event.candidate
             }));
         }
     };
 
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(message.data));
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.data));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
 
     socket.send(JSON.stringify({
         type: 'answer',
+	to: msg.from,
         room_id: currentRoom,
-        data: answer 
+        data: answer
     }));
 }
+
+function addRemoteVideo(stream, userId, username) {
+    if (document.getElementById(`wrapper-${userId}`)) return;
+    const grid = getEl('participantsGrid');
+    if (!grid) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'video-wrapper';
+    wrapper.id = `wrapper-${userId}`;
+    wrapper.innerHTML = `
+        <video id="video-${userId}" autoplay playsinline></video>
+        <span class="user-label">${username}</span>
+    `;
+    grid.appendChild(wrapper);
+    const video = document.getElementById(`video-${userId}`);
+    if (video) video.srcObject = stream;
+}
+
+function removeRemoteVideo(userId) {
+    document.getElementById(`wrapper-${userId}`)?.remove();
+}
+
+// --- УДАЛЕН ОШИБОЧНЫЙ БЛОК peerConnection.ontrack ---
 
 async function init() {
     const token = getToken();
@@ -539,7 +587,6 @@ async function init() {
             currentUser = await response.json();
             showScreen('app');
             await loadRooms();
-            // УДАЛЕНО: connectSocket(token); - Ждем, пока пользователь выберет комнату
         } else {
             logout();
         }

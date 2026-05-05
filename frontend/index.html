@@ -9,7 +9,7 @@
 </head>
 
 <body>
-  <!-- Auth Screen -->
+  <!-- Экран авторизации -->
   <div id="authScreen" class="screen active">
     <div class="auth-container">
       <div class="auth-header">
@@ -55,10 +55,10 @@
     </div>
   </div>
 
-  <!-- Main App Screen -->
+  <!-- Главный экран приложения -->
   <div id="appScreen" class="screen">
     <div class="app-layout">
-      <!-- Sidebar -->
+      <!-- Боковая панель -->
       <aside class="sidebar">
         <div class="sidebar-header">
           <h1>🎙️ Radiance</h1>
@@ -94,7 +94,7 @@
         </div>
       </aside>
 
-      <!-- Main Content -->
+      <!-- Основной контент -->
       <main class="main-content">
         <div id="noChatSelected" class="empty-state">
           <div class="empty-state-content">
@@ -105,11 +105,16 @@
         </div>
 
         <div id="chatContainer" class="chat-container hidden">
-          <!-- Chat Header -->
+          <!-- Заголовок чата -->
           <div class="chat-header">
             <div class="chat-header-info">
               <h2 id="chatRoomName"></h2>
               <p id="chatRoomInfo"></p>
+              <!-- Добавлено: Статус участников для работы скрипта -->
+              <div class="participants-status">
+                Участников онлайн: <span id="participant-count">0</span>
+                <ul id="participant-list" class="hidden"></ul>
+              </div>
             </div>
             <div class="chat-header-actions">
               <button class="btn-icon" id="toggleAudioBtn" title="Включить микрофон">🎙️</button>
@@ -119,7 +124,7 @@
             </div>
           </div>
 
-          <!-- Incoming Call Modal -->
+          <!-- Модальное окно входящего вызова -->
           <div id="incomingCallModal" class="modal hidden">
             <div class="modal-content">
               <p id="incomingCallInfo">Входящий вызов...</p>
@@ -130,16 +135,27 @@
             </div>
           </div>
 
-          <!-- Active Call UI -->
+          <!-- Интерфейс активного звонка -->
           <div id="activeCallUI" class="active-call hidden">
             <div class="call-header">
               <span id="callStatus" class="call-status">Звонок активен...</span>
               <button class="btn-danger" id="endCallBtn">Завершить звонок</button>
             </div>
-            <div class="participants-grid" id="participantsGrid"></div>
+            <!-- Сетка участников с видео -->
+            <div class="participants-grid" id="participantsGrid">
+                <!-- Ваше локальное видео -->
+                <div class="participant-card local" id="localParticipant">
+                    <div class="participant-video">
+                        <video id="local-video" autoplay muted playsinline></video>
+                    </div>
+                    <div class="participant-info">
+                        <span class="participant-name">Вы (Микрофон выкл.)</span>
+                    </div>
+                </div>
+            </div>
           </div>
 
-          <!-- Messages Area -->
+          <!-- Область сообщений -->
           <div class="messages-area">
             <ul id="messagesList" class="messages-list"></ul>
             <div id="messagesLoading" class="loading hidden">
@@ -147,7 +163,7 @@
             </div>
           </div>
 
-          <!-- Chat Footer -->
+          <!-- Футер чата -->
           <div class="chat-footer">
             <div class="message-input-group">
               <input type="text" id="messageInput" placeholder="Введите сообщение..." class="input-large">
@@ -162,7 +178,7 @@
     </div>
   </div>
 
-  <!-- Notifications -->
+  <!-- Уведомления -->
   <div id="notifications" class="notifications"></div>
 
   <script src="app.js"></script>

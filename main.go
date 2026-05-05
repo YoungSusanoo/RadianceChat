@@ -99,7 +99,7 @@ func main() {
 	mux.Handle("GET /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.GetMessages)))
 	mux.Handle("POST /rooms/{id}/messages", authHandler.AuthMiddleware(http.HandlerFunc(chatHandler.SendMessage)))
 
-	mux.HandleFunc("/signaling", signalingServer.HandleWebSocket)
+	mux.HandleFunc("/ws/chat/{room}/", signalingServer.HandleWebSocket)
 	mux.Handle("GET /rooms/{id}", authHandler.AuthMiddleware(http.HandlerFunc(roomHandler.GetRoom)))
 
 	// 6. Запуск сервера
