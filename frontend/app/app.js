@@ -77,7 +77,8 @@ function handleSocketMessage(msg) {
         state.socket,
         state.localStream,
         state.peerConnection,
-        (pc) => { state.peerConnection = pc; }
+        (pc) => { state.peerConnection = pc; },
+        (stream) => { state.localStream = stream; }
       );
       break;
 
@@ -109,10 +110,32 @@ function logout() {
 }
 
 function leaveRoom() {
+  if (state.peerConnection) {
+    state.peerConnection.close();
+    state.peerConnection = null;
+  }
+
   if (state.localStream) {
     state.localStream.getTracks().forEach(track => track.stop());
     state.localStream = null;
+    const localVideo = getEl('local-video');
+    if (localVideo) localVideo.srcObject = null;
   }
+
+  if (state.socket) {
+    state.socket.onclose = null;
+    state.socket.close();
+    state.socket = null;
+  }
+
+  const grid = getEl('participantsGrid');
+  if (grid) {
+    grid.querySelectorAll('.video-wrapper').forEach(w => w.remove());
+  }
+
+  state.activeParticipants.clear();
+  updateParticipantList(state.activeParticipants);
+
   state.currentRoom = null;
   state.isMicOn = false;
 
@@ -120,6 +143,7 @@ function leaveRoom() {
   getEl('noChatSelected')?.classList.remove('hidden');
 
   elements.roomsList.querySelectorAll('.room-item').forEach(el => el.classList.remove('active'));
+
   showNotification('Вы вышли из комнаты');
 }
 

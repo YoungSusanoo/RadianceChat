@@ -44,15 +44,27 @@ export async function startCall(currentRoom, socket, localStream, peerConnection
     }
 }
 
-export async function handleOffer(msg, currentRoom, socket, localStream, peerConnection, setPeerConnection) {
+export async function handleOffer(msg, currentRoom, socket, localStream, peerConnection,
+                                  setPeerConnection, setLocalStream) {
     if (!peerConnection) {
         peerConnection = new RTCPeerConnection(rtcConfig);
         setPeerConnection(peerConnection);
     }
 
-    if (localStream) {
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    if (!localStream) {
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            setLocalStream(localStream);
+            const localVideo = getEl('local-video');
+            if (localVideo) localVideo.srcObject = localStream;
+        } catch (e) {
+            console.error('Не удалось получить медиа при входящем звонке', e);
+            showNotification('Не удалось получить доступ к медиа', 'error');
+            return;
+        }
     }
+
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
     peerConnection.ontrack = (event) => {
         addRemoteVideo(event.streams[0], msg.userId || 'remote', 'Участник');
@@ -90,10 +102,7 @@ export function toggleMic(localStream, micBtn) {
     if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         micBtn.classList.toggle('active', !audioTrack.enabled);
-        const icon = micBtn.querySelector('i');
-        if (icon) {
-            icon.className = audioTrack.enabled ? 'fas fa-microphone' : 'fas fa-microphone-slash';
-        }
+        micBtn.textContent = audioTrack.enabled ? '🎙️' : '🔇';
     }
 }
 
@@ -103,10 +112,7 @@ export function toggleVideo(localStream, videoBtn) {
     if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         videoBtn.classList.toggle('active', !videoTrack.enabled);
-        const icon = videoBtn.querySelector('i');
-        if (icon) {
-            icon.className = videoTrack.enabled ? 'fas fa-video' : 'fas fa-video-slash';
-        }
+        videoBtn.textContent = videoTrack.enabled ? '📹' : '📷'; // или другие эмодзи
     }
 }
 

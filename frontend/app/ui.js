@@ -24,7 +24,7 @@ export const elements = {
     logoutBtn: getEl('logoutBtn'),
     authError: getEl('authError'),
     notification: getEl('notifications'),
-    toggleMicBtn: getEl('toggleMicBtn'),
+    toggleMicBtn: getEl('toggleAudioBtn'),
     callBtn: getEl('callBtn'),
     leaveRoomBtn: getEl('leaveRoomBtn')
 };
