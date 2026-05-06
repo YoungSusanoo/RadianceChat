@@ -342,11 +342,8 @@ async function leaveRoom() {
   currentRoom = null;
   window.currentRoomInvite = null;
   
-  // Hide call interface when leaving room
-  const callInterface = getEl('callInterface');
-  if (callInterface) {
-    callInterface.classList.add('hidden');
-  }
+  // Update call UI to hide interface (will be called by updateCallUI)
+  updateCallUI();
   
   showScreen('rooms');
   showNotification('Вы вышли из комнаты');
@@ -713,13 +710,17 @@ function endCall() {
 }
 
 function toggleMic() {
-  if (!localStream) return;
+  if (!localStream) {
+    showNotification('Сначала начните звонок', 'error');
+    return;
+  }
   
   const audioTrack = localStream.getAudioTracks()[0];
   if (audioTrack) {
     audioTrack.enabled = !audioTrack.enabled;
     isMicOn = audioTrack.enabled;
     updateCallUI();
+    showNotification(isMicOn ? 'Микрофон включен' : 'Микрофон выключен');
   }
 }
 
@@ -745,6 +746,10 @@ function updateCallUI() {
   const localParticipant = getEl('localParticipant');
 
   // Call interface is always visible when in a room
+  if (callInterface) {
+    callInterface.classList.toggle('hidden', !currentRoom);
+  }
+  
   // Update buttons based on call state
   if (startCallBtn) {
     startCallBtn.classList.toggle('hidden', isCallActive);
@@ -753,10 +758,12 @@ function updateCallUI() {
     endCallBtn.classList.toggle('hidden', !isCallActive);
   }
 
-  // Update mic button - only show when call is active
+  // Update mic button - show when in room, but only active during call
   if (toggleMicBtn) {
-    toggleMicBtn.classList.toggle('hidden', !isCallActive);
-    toggleMicBtn.classList.toggle('active', !isMicOn);
+    // Always show mic button when in a room (currentRoom is set)
+    toggleMicBtn.classList.toggle('hidden', !currentRoom);
+    // Only show as active (red/disabled) when mic is off during call
+    toggleMicBtn.classList.toggle('active', isCallActive && !isMicOn);
   }
 
   // Hide video button for voice-only calls
