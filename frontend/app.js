@@ -6,6 +6,7 @@ const userIdKey = 'radiance_user_id';
 let currentRoom = null;
 let currentUser = null;
 let localStream = null;
+let videoStream = null; // Separate stream for video to prevent memory leaks
 let socket = null;
 let peerConnections = new Map(); // Map of peerID -> RTCPeerConnection
 let activeParticipants = new Map(); // Map of peerID -> {username, userId}
@@ -476,6 +477,10 @@ async function connectSocket(token, roomId) {
         case 'chat_message':
           appendMessage(msg);
           break;
+
+        case 'video_state_changed':
+          handleVideoStateChanged(msg);
+          break;
       }
     } catch (err) {
       console.error("Error handling WebSocket message:", err);
@@ -539,6 +544,32 @@ function handleUserLeft(msg) {
       pc.close();
       peerConnections.delete(peerId);
     }
+  }
+}
+
+function handleVideoStateChanged(msg) {
+  const peerId = msg.from;
+  const videoEnabled = msg.data?.video_enabled;
+  
+  if (!peerId) return;
+  
+  const wrapper = document.getElementById(`wrapper-${peerId}`);
+  if (!wrapper) return;
+  
+  const video = wrapper.querySelector('video');
+  const placeholder = wrapper.querySelector('.no-video-placeholder');
+  const status = wrapper.querySelector('.participant-status');
+  
+  if (videoEnabled) {
+    // Video should be visible
+    video.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+    if (status) status.textContent = 'Видеозвонок';
+  } else {
+    // Video should be hidden
+    video.classList.add('hidden');
+    placeholder.classList.remove('hidden');
+    if (status) status.textContent = 'Голосовой участник';
   }
 }
 
@@ -786,14 +817,116 @@ function toggleMic() {
   }
 }
 
-function toggleVideo() {
+async function toggleVideo() {
   if (!localStream) return;
   
-  const videoTrack = localStream.getVideoTracks()[0];
-  if (videoTrack) {
-    videoTrack.enabled = !videoTrack.enabled;
-    isVideoOn = videoTrack.enabled;
-    updateCallUI();
+  if (isVideoOn) {
+    // Turn OFF video
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.stop();
+      localStream.removeTrack(videoTrack);
+    }
+    
+    // Stop the video stream to prevent memory leak
+    if (videoStream) {
+      videoStream.getTracks().forEach(track => track.stop());
+      videoStream = null;
+    }
+    
+    // Remove video track from all peer connections
+    peerConnections.forEach((pc, peerId) => {
+      const senders = pc.getSenders();
+      senders.forEach(sender => {
+        if (sender.track && sender.track.kind === 'video') {
+          pc.removeTrack(sender);
+        }
+      });
+      // Trigger renegotiation
+      renegotiateWithPeer(peerId);
+    });
+    
+    isVideoOn = false;
+    showNotification('Камера выключена');
+  } else {
+    // Turn ON video
+    try {
+      // Stop existing video stream if any to prevent memory leak
+      if (videoStream) {
+        videoStream.getTracks().forEach(track => track.stop());
+      }
+      
+      videoStream = await navigator.mediaDevices.getUserMedia({ 
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user'
+        }
+      });
+      
+      const videoTrack = videoStream.getVideoTracks()[0];
+      localStream.addTrack(videoTrack);
+      
+      // Add video track to all peer connections
+      peerConnections.forEach((pc, peerId) => {
+        pc.addTrack(videoTrack, localStream);
+        // Trigger renegotiation
+        renegotiateWithPeer(peerId);
+      });
+      
+      isVideoOn = true;
+      showNotification('Камера включена');
+    } catch (err) {
+      console.error("Error enabling video:", err);
+      showNotification('Не удалось включить камеру', 'error');
+      return;
+    }
+  }
+  
+  updateCallUI();
+  notifyVideoStateChange();
+}
+
+async function renegotiateWithPeer(peerId) {
+  const pc = peerConnections.get(peerId);
+  if (!pc) return;
+  
+  // Check if connection is in a stable state to avoid race conditions
+  if (pc.signalingState !== 'stable') {
+    console.log(`Skipping renegotiation for ${peerId}: not in stable state (${pc.signalingState})`);
+    return;
+  }
+  
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: 'offer',
+        from: getUserId(),
+        to: peerId,
+        room_id: currentRoom,
+        data: pc.localDescription
+      }));
+    }
+  } catch (err) {
+    console.error("Error renegotiating with peer:", peerId, err);
+    showNotification('Ошибка при обновлении видеосвязи', 'error');
+  }
+}
+
+function notifyVideoStateChange() {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      type: 'video_state_changed',
+      from: getUserId(),
+      to: 'all',
+      room_id: currentRoom,
+      data: {
+        video_enabled: isVideoOn
+      }
+    }));
   }
 }
 
@@ -823,43 +956,73 @@ function updateCallUI() {
     toggleMicBtn.classList.toggle('active', isCallActive && !isMicOn);
   }
 
-  // Hide video button for voice-only calls
+  // Show video button
   if (toggleVideoBtn) {
-    toggleVideoBtn.classList.add('hidden');
+    toggleVideoBtn.classList.toggle('hidden', !currentRoom);
+    toggleVideoBtn.classList.toggle('active', isVideoOn);
   }
-
-  // Hide video elements for voice-only calls
+  
+  // Update local video display
   if (localParticipant) {
     const videoElement = localParticipant.querySelector('video');
     const placeholder = localParticipant.querySelector('.no-video-placeholder');
-    if (videoElement) {
+    
+    if (isVideoOn && localStream) {
+      videoElement.srcObject = localStream;
+      videoElement.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+    } else {
       videoElement.classList.add('hidden');
-    }
-    if (placeholder) {
       placeholder.classList.remove('hidden');
     }
   }
 
   // Update status text
   if (localStatus) {
-    localStatus.textContent = isMicOn ? 'Микрофон вкл.' : 'Микрофон выкл.';
+    const status = [];
+    if (isMicOn) status.push('Микрофон вкл.');
+    if (isVideoOn) status.push('Камера вкл.');
+    localStatus.textContent = status.join(' • ') || 'Микрофон выкл.';
   }
 
   if (callStatus) {
-    callStatus.textContent = isCallActive ? 'Голосовой звонок активен' : 'Готов к звонку';
+    callStatus.textContent = isVideoOn 
+      ? 'Видеозвонок активен' 
+      : 'Голосовой звонок активен';
   }
 }
 
 function addRemoteVideo(stream, peerId, username) {
-  if (document.getElementById(`wrapper-${peerId}`)) return;
-  
   const grid = getEl('participantsGrid');
   if (!grid) return;
 
-  const wrapper = document.createElement('div');
-  wrapper.className = 'participant-card';
-  wrapper.id = `wrapper-${peerId}`;
-  wrapper.innerHTML = `
+  const wrapper = document.getElementById(`wrapper-${peerId}`);
+  
+  if (wrapper) {
+    // Update existing video element
+    const video = wrapper.querySelector('video');
+    if (video) {
+      video.srcObject = stream;
+      // Check if stream has video track
+      const hasVideo = stream.getVideoTracks().length > 0;
+      if (hasVideo) {
+        video.classList.remove('hidden');
+        wrapper.querySelector('.no-video-placeholder').classList.add('hidden');
+        wrapper.querySelector('.participant-status').textContent = 'Видеозвонок';
+      } else {
+        video.classList.add('hidden');
+        wrapper.querySelector('.no-video-placeholder').classList.remove('hidden');
+        wrapper.querySelector('.participant-status').textContent = 'Голосовой участник';
+      }
+    }
+    return;
+  }
+  
+  // Create new video element
+  const newWrapper = document.createElement('div');
+  newWrapper.className = 'participant-card';
+  newWrapper.id = `wrapper-${peerId}`;
+  newWrapper.innerHTML = `
     <div class="participant-video">
       <video id="video-${peerId}" autoplay playsinline class="hidden"></video>
       <div class="no-video-placeholder">
@@ -869,14 +1032,32 @@ function addRemoteVideo(stream, peerId, username) {
     </div>
     <div class="participant-info">
       <span class="participant-name">${username}</span>
+      <span class="participant-status" id="status-${peerId}">Голосовой участник</span>
     </div>
   `;
-  grid.appendChild(wrapper);
+  grid.appendChild(newWrapper);
   
   const video = document.getElementById(`video-${peerId}`);
   if (video) {
     video.srcObject = stream;
+    // Check if stream has video track
+    const hasVideo = stream.getVideoTracks().length > 0;
+    if (hasVideo) {
+      video.classList.remove('hidden');
+      newWrapper.querySelector('.no-video-placeholder').classList.add('hidden');
+      newWrapper.querySelector('.participant-status').textContent = 'Видеозвонок';
+    }
   }
+  
+  updateGridLayout();
+}
+
+function updateGridLayout() {
+  const grid = getEl('participantsGrid');
+  if (!grid) return;
+  
+  const count = grid.querySelectorAll('.participant-card').length;
+  grid.setAttribute('data-count', count);
 }
 
 function removeRemoteVideo(peerId) {
@@ -973,6 +1154,12 @@ function cleanup() {
     localStream = null;
   }
 
+  // Clear video stream
+  if (videoStream) {
+    videoStream.getTracks().forEach(track => track.stop());
+    videoStream = null;
+  }
+
   // Reset participant count
   const count = getEl('participantCount');
   if (count) {
@@ -1047,6 +1234,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Call
   getEl('endCallBtn')?.addEventListener('click', endCall);
   getEl('toggleMicBtn')?.addEventListener('click', toggleMic);
+  getEl('toggleVideoBtn')?.addEventListener('click', toggleVideo);
 
   // Messages
   getEl('sendMessageBtn')?.addEventListener('click', sendMessage);
