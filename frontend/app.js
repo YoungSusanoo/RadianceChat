@@ -660,6 +660,7 @@ function updateParticipantList() {
   if (sidebarCount) sidebarCount.textContent = totalParticipants;
   if (hint) hint.textContent = isHost ? 'Вы управляете комнатой' : 'Текущий звонок';
   if (endForAllBtn) endForAllBtn.classList.toggle('hidden', !currentRoom || !isHost);
+  refreshTileHostActions();
 
   if (!list) return;
 
@@ -739,12 +740,126 @@ function removeParticipant(peerId) {
   }
 }
 
+function renderTileHostActions(peerId) {
+  if (!isCurrentUserHost()) return '';
+
+  return `
+    <div class="tile-actions">
+      <button class="btn-icon participant-action" data-action="mute" data-peer="${escapeHtml(peerId)}" title="Отключить микрофон">🔇</button>
+      <button class="btn-icon btn-danger participant-action" data-action="remove" data-peer="${escapeHtml(peerId)}" title="Удалить участника">✕</button>
+    </div>
+  `;
+}
+
+function refreshTileHostActions() {
+  document.querySelectorAll('.participant-card.remote').forEach((card) => {
+    const peerId = card.getAttribute('data-peer');
+    if (!peerId) return;
+
+    card.querySelector('.tile-actions')?.remove();
+    const actionsHtml = renderTileHostActions(peerId);
+    if (actionsHtml) {
+      card.insertAdjacentHTML('beforeend', actionsHtml);
+    }
+  });
+}
+
 function endCallForAll() {
   if (!confirm(`Завершить звонок для всех участников комнаты "${currentRoomName}"?`)) return;
 
   if (sendRoomControl('end_call_for_all')) {
     showNotification('Звонок завершается для всех участников');
   }
+}
+
+function handleForceMute() {
+  const audioTrack = localStream?.getAudioTracks()[0];
+  if (audioTrack) {
+    audioTrack.enabled = false;
+  }
+  isMicOn = false;
+  updateCallUI();
+  showNotification('Организатор отключил ваш микрофон', 'error');
+}
+
+function handleParticipantRemoved(msg) {
+  showNotification(msg.data?.reason || 'Организатор удалил вас из комнаты', 'error');
+  leaveRoom();
+}
+
+function handleCallEndedForAll(msg) {
+  const reason = msg.data?.reason || 'Организатор завершил звонок для всех';
+  showCallEndedState(reason);
+}
+
+function showCallEndedState(reason = 'Звонок завершен') {
+  if (callEndRedirectTimer) {
+    clearTimeout(callEndRedirectTimer);
+  }
+
+  if (socket) {
+    socket.onclose = null;
+    socket.onerror = null;
+  }
+  socketRetryCount = 0;
+
+  peerConnections.forEach((pc) => pc.close());
+  peerConnections.clear();
+
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+
+  if (videoStream) {
+    videoStream.getTracks().forEach(track => track.stop());
+    videoStream = null;
+  }
+
+  isCallActive = false;
+  isMicOn = false;
+  isVideoOn = false;
+
+  const callInterface = getEl('callInterface');
+  const callStatus = getEl('callStatus');
+  const participantsHint = getEl('participantsPanelHint');
+  const endForAllBtn = getEl('endCallForAllBtn');
+
+  callInterface?.classList.add('call-ended');
+  if (callStatus) callStatus.textContent = 'Звонок завершен';
+  if (participantsHint) participantsHint.textContent = 'Звонок завершен';
+  if (endForAllBtn) endForAllBtn.classList.add('hidden');
+
+  [getEl('toggleMicBtn'), getEl('toggleVideoBtn'), getEl('endCallBtn'), endForAllBtn].forEach((button) => {
+    if (button) button.disabled = true;
+  });
+
+  document.querySelectorAll('.participant-card').forEach((card) => {
+    const video = card.querySelector('video');
+    const placeholder = card.querySelector('.no-video-placeholder');
+    const placeholderIcon = placeholder?.querySelector('span');
+    const placeholderText = placeholder?.querySelector('p');
+    const status = card.querySelector('.participant-status');
+
+    if (video) {
+      video.srcObject = null;
+      video.classList.add('hidden');
+    }
+    if (placeholder) placeholder.classList.remove('hidden');
+    if (placeholderIcon) placeholderIcon.textContent = '✅';
+    if (placeholderText) placeholderText.textContent = 'Звонок завершен';
+    if (status) status.textContent = 'Звонок завершен';
+  });
+
+  showNotification(reason, 'error');
+
+  callEndRedirectTimer = setTimeout(() => {
+    leaveRoom({
+      skipApi: true,
+      notification: 'Звонок завершен',
+      reloadRooms: true
+    });
+  }, 3000);
 }
 
 function handleForceMute() {
@@ -1305,8 +1420,9 @@ function addRemoteVideo(stream, peerId, username) {
   
   // Create new video element
   const newWrapper = document.createElement('div');
-  newWrapper.className = 'participant-card';
+  newWrapper.className = 'participant-card remote';
   newWrapper.id = `wrapper-${peerId}`;
+  newWrapper.setAttribute('data-peer', peerId);
   newWrapper.innerHTML = `
     <div class="participant-video">
       <video id="video-${peerId}" autoplay playsinline class="hidden"></video>
@@ -1316,9 +1432,10 @@ function addRemoteVideo(stream, peerId, username) {
       </div>
     </div>
     <div class="participant-info">
-      <span class="participant-name">${username}</span>
+      <span class="participant-name">${escapeHtml(username)}</span>
       <span class="participant-status" id="status-${peerId}">Голосовой участник</span>
     </div>
+    ${renderTileHostActions(peerId)}
   `;
   grid.appendChild(newWrapper);
   
@@ -1515,20 +1632,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Chat
   getEl('backToRoomsBtn')?.addEventListener('click', leaveRoom);
-  getEl('copyInviteBtn')?.addEventListener('click', () => {
+  const copyInvite = () => {
     if (window.currentRoomInvite) {
       copyToClipboard(window.currentRoomInvite);
     } else {
       showNotification('Нет кода приглашения', 'error');
     }
-  });
+  };
+  getEl('copyInviteBtn')?.addEventListener('click', copyInvite);
+  getEl('copyInviteBtnMeeting')?.addEventListener('click', copyInvite);
 
   // Call
   getEl('endCallBtn')?.addEventListener('click', endCall);
   getEl('toggleMicBtn')?.addEventListener('click', toggleMic);
   getEl('toggleVideoBtn')?.addEventListener('click', toggleVideo);
   getEl('endCallForAllBtn')?.addEventListener('click', endCallForAll);
-  getEl('participantsList')?.addEventListener('click', (e) => {
+  const handleParticipantAction = (e) => {
     const actionBtn = e.target.closest('.participant-action');
     if (!actionBtn) return;
 
@@ -1536,7 +1655,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const action = actionBtn.getAttribute('data-action');
     if (action === 'mute') muteParticipant(peerId);
     if (action === 'remove') removeParticipant(peerId);
-  });
+  };
+  getEl('participantsList')?.addEventListener('click', handleParticipantAction);
+  getEl('participantsGrid')?.addEventListener('click', handleParticipantAction);
 
   // Messages
   getEl('sendMessageBtn')?.addEventListener('click', sendMessage);
