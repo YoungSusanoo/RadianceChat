@@ -837,6 +837,26 @@ function showCallEndedState(reason = 'Звонок завершен') {
   }, 3000);
 }
 
+function handleForceMute() {
+  const audioTrack = localStream?.getAudioTracks()[0];
+  if (audioTrack) {
+    audioTrack.enabled = false;
+  }
+  isMicOn = false;
+  updateCallUI();
+  showNotification('Организатор отключил ваш микрофон', 'error');
+}
+
+function handleParticipantRemoved(msg) {
+  showNotification(msg.data?.reason || 'Организатор удалил вас из комнаты', 'error');
+  leaveRoom();
+}
+
+function handleCallEndedForAll(msg) {
+  showNotification(msg.data?.reason || 'Организатор завершил звонок для всех', 'error');
+  leaveRoom();
+}
+
 // WebRTC functions
 async function startCall() {
   if (!currentRoom) {
