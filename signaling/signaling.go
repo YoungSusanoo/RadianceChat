@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"radiance/middleware"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -100,6 +101,18 @@ func (s *SignalingServer) HandleWebSocket(w http.ResponseWriter, r *http.Request
 	// Use the user ID from the validated token
 	userID = claims.UserID
 
+	var roomActive bool
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1 AND status = 'active')", roomID).Scan(&roomActive); err != nil {
+		log.Printf("Rejecting connection: room status check failed for %s: %v", roomID, err)
+		http.Error(w, "Room status check failed", http.StatusInternalServerError)
+		return
+	}
+	if !roomActive {
+		log.Printf("Rejecting connection: room %s is not active", roomID)
+		http.Error(w, "Room is not active", http.StatusNotFound)
+		return
+	}
+
 	if username == "" {
 		username = "Участник"
 	}
@@ -191,6 +204,10 @@ func (s *SignalingServer) handlePeer(peer *Peer, room *Room) {
 		msg.From = peer.ID
 		msg.RoomID = room.ID
 
+		if s.handleControlMessage(peer, room, &msg) {
+			continue
+		}
+
 		// If a specific recipient is specified, send only to them
 		if msg.To != "" {
 			room.PeersMu.RLock()
@@ -203,6 +220,79 @@ func (s *SignalingServer) handlePeer(peer *Peer, room *Room) {
 			room.Broadcast <- &msg
 		}
 	}
+}
+
+func (s *SignalingServer) handleControlMessage(peer *Peer, room *Room, msg *Message) bool {
+	switch msg.Type {
+	case "mute_participant":
+		if !s.isRoomHost(room.ID, peer.UserID) {
+			peer.Send <- &Message{Type: "control_error", From: peer.ID, RoomID: room.ID, Data: map[string]string{"error": "Only host can mute participants"}}
+			return true
+		}
+		if msg.To == "" {
+			return true
+		}
+		room.PeersMu.RLock()
+		target, exists := room.Peers[msg.To]
+		room.PeersMu.RUnlock()
+		if exists {
+			target.Send <- &Message{Type: "force_mute", From: peer.ID, RoomID: room.ID, Data: map[string]string{"reason": "Организатор отключил ваш микрофон"}}
+		}
+		return true
+	case "remove_participant":
+		if !s.isRoomHost(room.ID, peer.UserID) {
+			peer.Send <- &Message{Type: "control_error", From: peer.ID, RoomID: room.ID, Data: map[string]string{"error": "Only host can remove participants"}}
+			return true
+		}
+		if msg.To == "" {
+			return true
+		}
+		room.PeersMu.RLock()
+		target, exists := room.Peers[msg.To]
+		room.PeersMu.RUnlock()
+		if exists {
+			_, _ = s.db.Exec("UPDATE participants SET left_at = NOW() WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL", room.ID, target.UserID)
+			target.Send <- &Message{Type: "participant_removed", From: peer.ID, RoomID: room.ID, Data: map[string]string{"reason": "Организатор удалил вас из комнаты"}}
+			go closePeerAfterNotice(target)
+		}
+		return true
+	case "end_call_for_all":
+		if !s.isRoomHost(room.ID, peer.UserID) {
+			peer.Send <- &Message{Type: "control_error", From: peer.ID, RoomID: room.ID, Data: map[string]string{"error": "Only host can end call for everyone"}}
+			return true
+		}
+		_, _ = s.db.Exec("UPDATE rooms SET status = 'ended', ended_at = NOW() WHERE id = $1", room.ID)
+		_, _ = s.db.Exec("UPDATE participants SET left_at = NOW() WHERE room_id = $1 AND left_at IS NULL", room.ID)
+
+		endMessage := &Message{Type: "call_ended_for_all", From: peer.ID, RoomID: room.ID, Data: map[string]string{"reason": "Организатор завершил звонок для всех"}}
+		room.PeersMu.RLock()
+		for _, target := range room.Peers {
+			select {
+			case target.Send <- endMessage:
+			default:
+				log.Printf("Buffer full for peer %s, skipping call end message", target.ID)
+			}
+			go closePeerAfterNotice(target)
+		}
+		room.PeersMu.RUnlock()
+		return true
+	default:
+		return false
+	}
+}
+
+func closePeerAfterNotice(peer *Peer) {
+	time.Sleep(250 * time.Millisecond)
+	peer.Conn.Close()
+}
+
+func (s *SignalingServer) isRoomHost(roomID, userID string) bool {
+	var exists bool
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1 AND host_id = $2 AND status = 'active')", roomID, userID).Scan(&exists); err != nil {
+		log.Printf("Failed to check room host for room %s user %s: %v", roomID, userID, err)
+		return false
+	}
+	return exists
 }
 
 func (s *SignalingServer) broadcastLoop(room *Room) {

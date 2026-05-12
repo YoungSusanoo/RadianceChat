@@ -130,6 +130,7 @@
 
       <!-- Основной контент -->
       <main class="chat-main">
+        <section class="conversation-panel">
         <!-- Интерфейс звонка -->
         <div id="callInterface" class="call-interface">
           <div class="call-header">
@@ -174,6 +175,21 @@
             <button class="btn-primary" id="sendMessageBtn">Отправить</button>
           </div>
         </footer>
+        </section>
+
+        <aside class="room-participants-panel" aria-label="Участники комнаты">
+          <div class="participants-panel-header">
+            <div>
+              <h3>Участники</h3>
+              <p id="participantsPanelHint">Текущий звонок</p>
+            </div>
+            <span class="participants-badge" id="sidebarParticipantCount">0</span>
+          </div>
+          <div id="participantsList" class="participants-list"></div>
+          <div class="participants-panel-actions">
+            <button class="btn-danger hidden" id="endCallForAllBtn">Завершить для всех</button>
+          </div>
+        </aside>
       </main>
     </div>
   </div>
