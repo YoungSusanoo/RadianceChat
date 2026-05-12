@@ -129,20 +129,19 @@
       </header>
 
       <!-- Основной контент -->
-      <main class="chat-main">
-        <!-- Интерфейс звонка -->
-        <div id="callInterface" class="call-interface">
-          <div class="call-header">
-            <span id="callStatus" class="call-status">Голосовой звонок активен</span>
-            <div class="call-controls">
-              <button class="btn-icon" id="toggleMicBtn" title="Микрофон">🎙️</button>
-              <button class="btn-icon" id="toggleVideoBtn" title="Камера">📹</button>
-              <button class="btn-danger" id="endCallBtn">Завершить звонок</button>
+      <main class="chat-main meeting-main">
+        <!-- Отдельный интерфейс звонка -->
+        <section id="callInterface" class="call-interface meeting-interface">
+          <div class="call-header meeting-topbar">
+            <div>
+              <span id="callStatus" class="call-status">Голосовой звонок активен</span>
+              <p class="meeting-subtitle">Комната звонка</p>
             </div>
+            <button class="btn-icon" id="copyInviteBtnMeeting" title="Копировать код приглашения">📋</button>
           </div>
-          
+
           <!-- Сетка участников -->
-          <div class="participants-grid" id="participantsGrid">
+          <div class="participants-grid meeting-grid" id="participantsGrid">
             <div class="participant-card local" id="localParticipant">
               <div class="participant-video">
                 <video id="local-video" autoplay muted playsinline class="hidden"></video>
@@ -157,23 +156,33 @@
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Область сообщений -->
-        <div class="messages-area">
-          <ul id="messagesList" class="messages-list"></ul>
-          <div id="messagesLoading" class="loading hidden">
-            <span></span><span></span><span></span>
+          <div class="call-controls meeting-controls">
+            <button class="btn-icon" id="toggleMicBtn" title="Микрофон">🎙️</button>
+            <button class="btn-icon" id="toggleVideoBtn" title="Камера">📹</button>
+            <button class="btn-danger" id="endCallBtn">Выйти</button>
+            <button class="btn-danger hidden" id="endCallForAllBtn">Завершить для всех</button>
           </div>
-        </div>
+        </section>
 
-        <!-- Футер чата -->
-        <footer class="chat-footer">
-          <div class="message-input-group">
-            <input type="text" id="messageInput" placeholder="Введите сообщение..." class="input-large">
-            <button class="btn-primary" id="sendMessageBtn">Отправить</button>
+        <aside class="chat-side-panel" aria-label="Чат комнаты">
+          <div class="chat-side-header">
+            <h3>Чат комнаты</h3>
+            <span class="participants-badge" id="sidebarParticipantCount">0</span>
           </div>
-        </footer>
+          <div class="messages-area">
+            <ul id="messagesList" class="messages-list"></ul>
+            <div id="messagesLoading" class="loading hidden">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+          <footer class="chat-footer">
+            <div class="message-input-group">
+              <input type="text" id="messageInput" placeholder="Введите сообщение..." class="input-large">
+              <button class="btn-primary" id="sendMessageBtn">Отправить</button>
+            </div>
+          </footer>
+        </aside>
       </main>
     </div>
   </div>

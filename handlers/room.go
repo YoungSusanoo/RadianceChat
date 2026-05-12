@@ -3,9 +3,9 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/google/uuid"
 	"net/http"
 	"radiance/models"
-	"github.com/google/uuid"
 )
 
 type RoomHandler struct {
@@ -95,16 +95,16 @@ func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) ListRooms(w http.ResponseWriter, r *http.Request) {
-    userID := r.Header.Get("X-User-ID") // Получаем ID текущего пользователя
+	userID := r.Header.Get("X-User-ID") // Получаем ID текущего пользователя
 
-    rows, err := h.db.Query(
-        `SELECT r.id, r.name, r.type, r.host_id, r.invite_link, r.created_at, r.status 
+	rows, err := h.db.Query(
+		`SELECT r.id, r.name, r.type, r.host_id, r.invite_link, r.created_at, r.status
          FROM rooms r
          JOIN participants p ON r.id = p.room_id
          WHERE r.status = 'active' AND p.user_id = $1 AND p.left_at IS NULL
          ORDER BY r.created_at DESC`,
-        userID,
-    )
+		userID,
+	)
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
@@ -133,14 +133,14 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	roomID := r.PathValue("id")
 
-	// Check if room exists
+	// Check if active room exists
 	var exists bool
-	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1)", roomID).Scan(&exists); err != nil {
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1 AND status = 'active')", roomID).Scan(&exists); err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	if !exists {
-		http.Error(w, "Room not found", http.StatusNotFound)
+		http.Error(w, "Room not found or already ended", http.StatusNotFound)
 		return
 	}
 
