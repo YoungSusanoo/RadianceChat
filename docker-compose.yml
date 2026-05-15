@@ -38,7 +38,7 @@ services:
       dockerfile: Dockerfile
     container_name: radiance_frontend
     ports:
-      - "8080:80"
+      - "8090:80"
     depends_on:
       - app
     networks:

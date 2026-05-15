@@ -61,44 +61,52 @@ func (s *SQLRoomStore) CreateRoomWithHost(room models.Room, participantID string
 	return tx.Commit()
 }
 
-func (s *SQLRoomStore) FindRoomByID(roomID string) (models.Room, error) {
-	var room models.Room
-	err := s.db.QueryRow(
-		"SELECT id, name, type, host_id, invite_link, created_at, status FROM rooms WHERE id = $1",
-		roomID,
-	).Scan(&room.ID, &room.Name, &room.Type, &room.HostID, &room.InviteLink, &room.CreatedAt, &room.Status)
-	return room, err
+func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
+    roomID := r.PathValue("id")
+    var room models.Room
+
+    err := h.db.QueryRow("SELECT id, name, type, host_id FROM rooms WHERE id = $1", roomID).
+        Scan(&room.ID, &room.Name, &room.Type, &room.HostID)
+    
+    if err != nil {
+        http.Error(w, "Room not found", http.StatusNotFound)
+        return
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(room)
 }
 
-func (s *SQLRoomStore) ListActiveRoomsForUser(userID string) ([]models.Room, error) {
-	rows, err := s.db.Query(
-		`SELECT r.id, r.name, r.type, r.host_id, r.invite_link, r.created_at, r.status
+func (h *RoomHandler) ListRooms(w http.ResponseWriter, r *http.Request) {
+    userID := r.Header.Get("X-User-ID")
+
+    rows, err := h.db.Query(
+        `SELECT r.id, r.name, r.type, r.host_id, r.invite_link, r.created_at, r.status,
+                (r.host_id = $1) AS is_host
          FROM rooms r
          JOIN participants p ON r.id = p.room_id
          WHERE r.status = 'active' AND p.user_id = $1 AND p.left_at IS NULL
          ORDER BY r.created_at DESC`,
-		userID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+        userID,
+    )
+    if err != nil {
+        http.Error(w, "Database error", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
-	rooms := make([]models.Room, 0)
-	for rows.Next() {
-		var room models.Room
-		if err := rows.Scan(&room.ID, &room.Name, &room.Type, &room.HostID, &room.InviteLink, &room.CreatedAt, &room.Status); err != nil {
-			return nil, err
-		}
-		rooms = append(rooms, room)
-	}
-	return rooms, rows.Err()
-}
+    rooms := make([]models.Room, 0)
+    for rows.Next() {
+        var room models.Room
+        if err := rows.Scan(&room.ID, &room.Name, &room.Type, &room.HostID, &room.InviteLink, &room.CreatedAt, &room.Status, &room.IsHost); err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            return
+        }
+        rooms = append(rooms, room)
+    }
 
-func (s *SQLRoomStore) ActiveRoomExists(roomID string) (bool, error) {
-	var exists bool
-	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1 AND status = 'active')", roomID).Scan(&exists)
-	return exists, err
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(rooms)
 }
 
 func (s *SQLRoomStore) IsUserActiveParticipant(roomID, userID string) (bool, error) {
@@ -370,5 +378,8 @@ func (h *RoomHandler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to delete room")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	_, _ = h.db.Exec("UPDATE participants SET left_at = NOW() WHERE room_id = $1 AND left_at IS NULL", roomID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
