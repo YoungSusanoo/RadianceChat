@@ -75,55 +75,51 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
-	roomID := r.PathValue("id")
+    roomID := r.PathValue("id")
+    var room models.Room
 
-	var room models.Room
-	err := h.db.QueryRow(
-		"SELECT id, name, type, host_id, invite_link, created_at, status FROM rooms WHERE id = $1",
-		roomID,
-	).Scan(&room.ID, &room.Name, &room.Type, &room.HostID, &room.InviteLink, &room.CreatedAt, &room.Status)
-
-	if err == sql.ErrNoRows {
-		http.Error(w, "Room not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(room)
+    err := h.db.QueryRow("SELECT id, name, type, host_id FROM rooms WHERE id = $1", roomID).
+        Scan(&room.ID, &room.Name, &room.Type, &room.HostID)
+    
+    if err != nil {
+        http.Error(w, "Room not found", http.StatusNotFound)
+        return
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(room)
 }
 
 func (h *RoomHandler) ListRooms(w http.ResponseWriter, r *http.Request) {
-	userID := r.Header.Get("X-User-ID") // Получаем ID текущего пользователя
+    userID := r.Header.Get("X-User-ID")
 
-	rows, err := h.db.Query(
-		`SELECT r.id, r.name, r.type, r.host_id, r.invite_link, r.created_at, r.status
+    rows, err := h.db.Query(
+        `SELECT r.id, r.name, r.type, r.host_id, r.invite_link, r.created_at, r.status,
+                (r.host_id = $1) AS is_host
          FROM rooms r
          JOIN participants p ON r.id = p.room_id
          WHERE r.status = 'active' AND p.user_id = $1 AND p.left_at IS NULL
          ORDER BY r.created_at DESC`,
-		userID,
-	)
-	if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
+        userID,
+    )
+    if err != nil {
+        http.Error(w, "Database error", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
-	rooms := make([]models.Room, 0)
-	for rows.Next() {
-		var room models.Room
-		if err := rows.Scan(&room.ID, &room.Name, &room.Type, &room.HostID, &room.InviteLink, &room.CreatedAt, &room.Status); err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
-			return
-		}
-		rooms = append(rooms, room)
-	}
+    rooms := make([]models.Room, 0)
+    for rows.Next() {
+        var room models.Room
+        if err := rows.Scan(&room.ID, &room.Name, &room.Type, &room.HostID, &room.InviteLink, &room.CreatedAt, &room.Status, &room.IsHost); err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            return
+        }
+        rooms = append(rooms, room)
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rooms)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(rooms)
 }
 
 func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {

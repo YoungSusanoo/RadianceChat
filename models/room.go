@@ -10,6 +10,7 @@ type Room struct {
 	InviteLink string    `json:"invite_link"`
 	CreatedAt  time.Time `json:"created_at"`
 	Status     string    `json:"status"` // active, ended
+        IsHost     bool      `json:"is_host"`
 }
 
 type CreateRoomRequest struct {
