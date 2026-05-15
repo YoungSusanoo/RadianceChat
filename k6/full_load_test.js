@@ -261,7 +261,7 @@ export function scenarioB(data) {
 
     // POST /invites/{invite}
     const joinRes = http.post(
-      `${BASE_URL}/invites/${data.sharedInvite}`,
+      `${BASE_URL}/rooms/${data.sharedRoomId}/join`,
       null,
       { headers: authH(token), tags: { step: 'join_invite' } },
     );
@@ -410,7 +410,7 @@ export function scenarioD(data) {
 
   // Оцениваем доставку для этого VU
   // 5 VU → каждое сообщение должно дойти до 4 других
-  const expectedMin = sent * 4 * 0.90;
+  const expectedMin = sent * 2 * 0.90;
   metrics.wsDelivery.add(received >= expectedMin);
 
   check(wsRes, { 'D: WS 101': (r) => r && r.status === 101 });

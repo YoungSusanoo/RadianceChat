@@ -1,4 +1,0 @@
-* text=auto eol=lf
-frontend/*.html text eol=lf
-frontend/*.css text eol=lf
-frontend/*.js text eol=lf
