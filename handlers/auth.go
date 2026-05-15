@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,13 +18,58 @@ import (
 	"github.com/google/uuid"
 )
 
+type UserStore interface {
+	CreateUser(user models.User, passwordHash string) error
+	FindUserByEmail(email string) (models.User, string, error)
+	FindUserByID(id string) (models.User, error)
+}
+
+type SQLUserStore struct {
+	db *sql.DB
+}
+
+func NewSQLUserStore(db *sql.DB) *SQLUserStore {
+	return &SQLUserStore{db: db}
+}
+
+func (s *SQLUserStore) CreateUser(user models.User, passwordHash string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO users (id, username, email, password_hash, status) VALUES ($1, $2, $3, $4, $5)",
+		user.ID, user.Username, user.Email, passwordHash, user.Status,
+	)
+	return err
+}
+
+func (s *SQLUserStore) FindUserByEmail(email string) (models.User, string, error) {
+	var user models.User
+	var passwordHash string
+	err := s.db.QueryRow(
+		"SELECT id, username, email, password_hash, status FROM users WHERE email = $1",
+		email,
+	).Scan(&user.ID, &user.Username, &user.Email, &passwordHash, &user.Status)
+	return user, passwordHash, err
+}
+
+func (s *SQLUserStore) FindUserByID(id string) (models.User, error) {
+	var user models.User
+	err := s.db.QueryRow(
+		"SELECT id, username, email, status FROM users WHERE id = $1",
+		id,
+	).Scan(&user.ID, &user.Username, &user.Email, &user.Status)
+	return user, err
+}
+
 type AuthHandler struct {
-	db        *sql.DB
+	users     UserStore
 	jwtSecret string
 }
 
 func NewAuthHandler(db *sql.DB, jwtSecret string) *AuthHandler {
-	return &AuthHandler{db: db, jwtSecret: jwtSecret}
+	return NewAuthHandlerWithStore(NewSQLUserStore(db), jwtSecret)
+}
+
+func NewAuthHandlerWithStore(users UserStore, jwtSecret string) *AuthHandler {
+	return &AuthHandler{users: users, jwtSecret: jwtSecret}
 }
 
 func hashPassword(password string) (string, error) {
@@ -50,150 +96,108 @@ func verifyPassword(stored, password string) bool {
 	return expected == parts[1]
 }
 
-func (h *AuthHandler) hashAndStorePassword(password string) (string, error) {
-	passwordHash, err := hashPassword(password)
-	if err != nil {
-		return "", err
-	}
-	return passwordHash, nil
-}
-
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req models.AuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
+	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" || req.Password == "" {
-		http.Error(w, "Email and password required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Email and password required")
 		return
 	}
 
-	userID := uuid.New().String()
-	passwordHash, err := h.hashAndStorePassword(req.Password)
+	passwordHash, err := hashPassword(req.Password)
 	if err != nil {
-		http.Error(w, "Failed to process password", http.StatusInternalServerError)
-		return
-	}
-	username := strings.Split(req.Email, "@")[0]
-
-	_, err = h.db.Exec(
-		"INSERT INTO users (id, username, email, password_hash, status) VALUES ($1, $2, $3, $4, $5)",
-		userID, username, req.Email, passwordHash, "offline",
-	)
-	if err != nil {
-		http.Error(w, "User already exists", http.StatusConflict)
+		writeError(w, http.StatusInternalServerError, "Failed to process password")
 		return
 	}
 
-	token, err := middleware.GenerateToken(userID, h.jwtSecret)
-	if err != nil {
-		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
-		return
+	user := models.User{
+		ID:       uuid.New().String(),
+		Username: strings.Split(req.Email, "@")[0],
+		Email:    req.Email,
+		Status:   "offline",
 	}
 
-	resp := models.AuthResponse{
-		Token: token,
-		User: &models.User{
-			ID:     userID,
-			Email:  req.Email,
-			Status: "offline",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req models.AuthRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	var user models.User
-	var passwordHash string
-	err := h.db.QueryRow(
-    		"SELECT id, username, email, password_hash FROM users WHERE email = $1", 
-    		req.Email,
-	).Scan(&user.ID, &user.Username, &user.Email, &passwordHash)
-
-	if err == sql.ErrNoRows {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
-		return
-	} else if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
-	if !verifyPassword(passwordHash, req.Password) {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+	if err := h.users.CreateUser(user, passwordHash); err != nil {
+		writeError(w, http.StatusConflict, "User already exists")
 		return
 	}
 
 	token, err := middleware.GenerateToken(user.ID, h.jwtSecret)
 	if err != nil {
-		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
 
-	resp := models.AuthResponse{
-		Token: token,
-		User:  &user,
+	writeJSON(w, http.StatusCreated, models.AuthResponse{Token: token, User: &user})
+}
+
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var req models.AuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	user, passwordHash, err := h.users.FindUserByEmail(strings.TrimSpace(req.Email))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	if !verifyPassword(passwordHash, req.Password) {
+		writeError(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	}
+
+	token, err := middleware.GenerateToken(user.ID, h.jwtSecret)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to generate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models.AuthResponse{Token: token, User: &user})
 }
 
 func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
-	authHeader := r.Header.Get("Authorization")
-	token, err := middleware.ExtractToken(authHeader)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	userID, ok := currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
-	claims, err := middleware.VerifyToken(token, h.jwtSecret)
+	user, err := h.users.FindUserByID(userID)
 	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusNotFound, "User not found")
 		return
 	}
 
-	var user models.User
-	err = h.db.QueryRow(
-		"SELECT id, email, status FROM users WHERE id = $1",
-		claims.UserID,
-	).Scan(&user.ID, &user.Email, &user.Status)
-
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *AuthHandler) AuthMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        authHeader := r.Header.Get("Authorization")
-        token, err := middleware.ExtractToken(authHeader)
-        if err != nil {
-            http.Error(w, "Unauthorized", http.StatusUnauthorized)
-            return
-        }
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		token, err := middleware.ExtractToken(authHeader)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "Unauthorized")
+			return
+		}
 
-        claims, err := middleware.VerifyToken(token, h.jwtSecret)
-        if err != nil {
-            http.Error(w, "Invalid token", http.StatusUnauthorized)
-            return
-        }
+		claims, err := middleware.VerifyToken(token, h.jwtSecret)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "Invalid token")
+			return
+		}
 
-        // Передаем UserID в заголовок для Handler-ов
-        r.Header.Set("X-User-ID", claims.UserID)
-        next.ServeHTTP(w, r)
-    })
+		r.Header.Set("X-User-ID", claims.UserID)
+		next.ServeHTTP(w, r)
+	})
 }

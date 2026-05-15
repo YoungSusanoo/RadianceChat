@@ -5,90 +5,130 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"radiance/models"
 
 	"github.com/google/uuid"
 )
 
-type ChatHandler struct {
+type ChatStore interface {
+	IsUserActiveParticipant(roomID, userID string) (bool, error)
+	CreateMessage(message models.Message) error
+	UsernameByID(userID string) (string, error)
+	MessagesByRoom(roomID string, limit, offset int) ([]models.Message, error)
+}
+
+type SQLChatStore struct {
 	db *sql.DB
 }
 
+func NewSQLChatStore(db *sql.DB) *SQLChatStore {
+	return &SQLChatStore{db: db}
+}
+
+func (s *SQLChatStore) IsUserActiveParticipant(roomID, userID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM participants WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL)", roomID, userID).Scan(&exists)
+	return exists, err
+}
+
+func (s *SQLChatStore) CreateMessage(message models.Message) error {
+	_, err := s.db.Exec(
+		"INSERT INTO messages (id, room_id, user_id, content) VALUES ($1, $2, $3, $4)",
+		message.ID, message.RoomID, message.UserID, message.Content,
+	)
+	return err
+}
+
+func (s *SQLChatStore) UsernameByID(userID string) (string, error) {
+	var username string
+	err := s.db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&username)
+	return username, err
+}
+
+func (s *SQLChatStore) MessagesByRoom(roomID string, limit, offset int) ([]models.Message, error) {
+	rows, err := s.db.Query(
+		"SELECT m.id, m.room_id, m.user_id, m.content, m.created_at, m.is_edited, m.is_deleted, u.username FROM messages m JOIN users u ON m.user_id = u.id WHERE m.room_id = $1 AND m.is_deleted = false ORDER BY m.created_at DESC LIMIT $2 OFFSET $3",
+		roomID, limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]models.Message, 0)
+	for rows.Next() {
+		var m models.Message
+		if err := rows.Scan(&m.ID, &m.RoomID, &m.UserID, &m.Content, &m.CreatedAt, &m.IsEdited, &m.IsDeleted, &m.Username); err != nil {
+			return nil, err
+		}
+		messages = append(messages, m)
+	}
+	return messages, rows.Err()
+}
+
+type ChatHandler struct {
+	chat ChatStore
+}
+
 func NewChatHandler(db *sql.DB) *ChatHandler {
-	return &ChatHandler{db: db}
+	return NewChatHandlerWithStore(NewSQLChatStore(db))
+}
+
+func NewChatHandlerWithStore(chat ChatStore) *ChatHandler {
+	return &ChatHandler{chat: chat}
 }
 
 func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
-	userID := r.Header.Get("X-User-ID")
-	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	userID, ok := currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-
 	roomID := r.PathValue("id")
 
 	var req models.SendMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-
+	req.Content = strings.TrimSpace(req.Content)
 	if req.Content == "" {
-		http.Error(w, "Content required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Content required")
 		return
 	}
 
-	messageID := uuid.New().String()
-
-	// Insert message - DB trigger will enforce active participant constraint
-	// This ensures atomicity: if user is not active, insert will fail at DB level
-	_, err := h.db.Exec(
-		"INSERT INTO messages (id, room_id, user_id, content) VALUES ($1, $2, $3, $4)",
-		messageID, roomID, userID, req.Content,
-	)
+	active, err := h.chat.IsUserActiveParticipant(roomID, userID)
 	if err != nil {
-		// Check if it's a participant constraint violation
-		if err.Error() == "pq: User is not an active participant in this room" {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-		http.Error(w, "Failed to send message", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if !active {
+		writeError(w, http.StatusForbidden, "Forbidden")
 		return
 	}
 
-	var username string
-	if err := h.db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&username); err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+	username, err := h.chat.UsernameByID(userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 
-	message := models.Message{
-		ID:        messageID,
-		RoomID:    roomID,
-		UserID:    userID,
-		Username:  username,
-		Content:   req.Content,
-		IsEdited:  false,
-		IsDeleted: false,
+	message := models.Message{ID: uuid.New().String(), RoomID: roomID, UserID: userID, Username: username, Content: req.Content, IsEdited: false, IsDeleted: false}
+	if err := h.chat.CreateMessage(message); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to send message")
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(message)
+	writeJSON(w, http.StatusCreated, message)
 }
 
 func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
-	roomID := r.PathValue("id")
-	userID := r.Header.Get("X-User-ID")
-	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if _, ok := currentUserID(r); !ok {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-
-	// Note: GetMessages doesn't need to check active participant
-	// Users can read messages from rooms they've previously been in
-	// This supports use cases like message history after leaving
 
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -104,26 +144,10 @@ func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := h.db.Query(
-		"SELECT m.id, m.room_id, m.user_id, m.content, m.created_at, m.is_edited, m.is_deleted, u.username FROM messages m JOIN users u ON m.user_id = u.id WHERE m.room_id = $1 AND m.is_deleted = false ORDER BY m.created_at DESC LIMIT $2 OFFSET $3",
-		roomID, limit, offset,
-	)
+	messages, err := h.chat.MessagesByRoom(r.PathValue("id"), limit, offset)
 	if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	defer rows.Close()
-
-	var messages []models.Message
-	for rows.Next() {
-		var m models.Message
-		if err := rows.Scan(&m.ID, &m.RoomID, &m.UserID, &m.Content, &m.CreatedAt, &m.IsEdited, &m.IsDeleted, &m.Username); err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
-			return
-		}
-		messages = append(messages, m)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(messages)
+	writeJSON(w, http.StatusOK, messages)
 }
