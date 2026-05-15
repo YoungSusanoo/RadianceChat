@@ -12,11 +12,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// --- Интерфейс хранилища комнат ---
+// RoomStore defines interface for room persistence
 type RoomStore interface {
 	CreateRoomWithHost(room models.Room, participantID string) error
 	FindRoomByID(roomID string) (models.Room, error)
-	ListActiveRoomsForUser(userID string) ([]models.Room, error) // теперь возвращает комнаты с is_host
+	ListActiveRoomsForUser(userID string) ([]models.Room, error)
 	ActiveRoomExists(roomID string) (bool, error)
 	IsUserActiveParticipant(roomID, userID string) (bool, error)
 	ActiveParticipantCount(roomID string) (int, error)
@@ -28,7 +28,7 @@ type RoomStore interface {
 	EndRoomAndLeaveParticipants(roomID string) error
 }
 
-// --- SQL реализация хранилища ---
+// SQLRoomStore implements RoomStore using PostgreSQL
 type SQLRoomStore struct {
 	db *sql.DB
 }
@@ -72,7 +72,7 @@ func (s *SQLRoomStore) FindRoomByID(roomID string) (models.Room, error) {
 	return room, err
 }
 
-// ListActiveRoomsForUser возвращает комнаты с флагом is_host, вычисленным на основе переданного userID
+// ListActiveRoomsForUser returns rooms with is_host flag computed based on userID
 func (s *SQLRoomStore) ListActiveRoomsForUser(userID string) ([]models.Room, error) {
 	rows, err := s.db.Query(
 		`SELECT r.id, r.name, r.type, r.host_id, r.invite_link, r.created_at, r.status,
@@ -186,7 +186,7 @@ func (s *SQLRoomStore) EndRoomAndLeaveParticipants(roomID string) error {
 	return tx.Commit()
 }
 
-// --- HTTP обработчик ---
+// RoomHandler is the HTTP handler for room operations
 type RoomHandler struct {
 	rooms RoomStore
 }
@@ -199,7 +199,7 @@ func NewRoomHandlerWithStore(rooms RoomStore) *RoomHandler {
 	return &RoomHandler{rooms: rooms}
 }
 
-// Вспомогательные функции (должны быть определены где-то ещё, либо здесь)
+// Helper functions
 func currentUserID(r *http.Request) (string, bool) {
 	userID := r.Header.Get("X-User-ID")
 	if userID == "" {
@@ -262,13 +262,11 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
-	roomID := r.PathValue("id")
-	room, err := h.rooms.FindRoomByID(roomID)
+	room, err := h.rooms.FindRoomByID(r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "Room not found")
 		return
-	}
-	if err != nil {
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
@@ -375,7 +373,7 @@ func (h *RoomHandler) JoinByInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Database error")
-		return
+	 return
 	}
 	r.SetPathValue("id", roomID)
 	h.JoinRoom(w, r)
