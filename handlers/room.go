@@ -196,7 +196,6 @@ func NewRoomHandlerWithStore(rooms RoomStore) *RoomHandler {
 	return &RoomHandler{rooms: rooms}
 }
 
-// Helper functions
 func currentUserID(r *http.Request) (string, bool) {
 	userID := r.Header.Get("X-User-ID")
 	if userID == "" {
