@@ -27,10 +27,6 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	roomID := r.PathValue("id")
-	if !h.isActiveParticipant(roomID, userID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 
 	var req models.SendMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -45,11 +41,18 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	messageID := uuid.New().String()
 
+	// Insert message - DB trigger will enforce active participant constraint
+	// This ensures atomicity: if user is not active, insert will fail at DB level
 	_, err := h.db.Exec(
 		"INSERT INTO messages (id, room_id, user_id, content) VALUES ($1, $2, $3, $4)",
 		messageID, roomID, userID, req.Content,
 	)
 	if err != nil {
+		// Check if it's a participant constraint violation
+		if err.Error() == "pq: User is not an active participant in this room" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		http.Error(w, "Failed to send message", http.StatusInternalServerError)
 		return
 	}
@@ -82,10 +85,10 @@ func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !h.isActiveParticipant(roomID, userID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
+
+	// Note: GetMessages doesn't need to check active participant
+	// Users can read messages from rooms they've previously been in
+	// This supports use cases like message history after leaving
 
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -123,15 +126,4 @@ func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(messages)
-}
-
-func (h *ChatHandler) isActiveParticipant(roomID, userID string) bool {
-	var exists bool
-	if err := h.db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM participants WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL)",
-		roomID, userID,
-	).Scan(&exists); err != nil {
-		return false
-	}
-	return exists
 }

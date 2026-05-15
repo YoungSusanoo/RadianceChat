@@ -55,3 +55,33 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
+
+-- View for active participants (eliminates need for application-level checks)
+CREATE OR REPLACE VIEW active_participants AS
+SELECT id, room_id, user_id, role, joined_at
+FROM participants
+WHERE left_at IS NULL;
+
+-- Function to ensure only active participants can send messages
+CREATE OR REPLACE FUNCTION check_active_participant()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Verify user is an active participant in the room
+    IF NOT EXISTS (
+        SELECT 1 FROM participants 
+        WHERE room_id = NEW.room_id 
+        AND user_id = NEW.user_id 
+        AND left_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'User is not an active participant in this room';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to enforce participant check at DB level (atomic with INSERT)
+DROP TRIGGER IF EXISTS enforce_active_participant_on_message ON messages;
+CREATE TRIGGER enforce_active_participant_on_message
+BEFORE INSERT ON messages
+FOR EACH ROW
+EXECUTE FUNCTION check_active_participant();

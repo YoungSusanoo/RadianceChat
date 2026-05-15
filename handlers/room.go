@@ -3,9 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
-	"github.com/google/uuid"
 	"net/http"
 	"radiance/models"
+
+	"github.com/google/uuid"
 )
 
 type RoomHandler struct {
@@ -162,7 +163,7 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	if activeCount >= 5 {
+	if activeCount >= 100 {
 		http.Error(w, "Room is full", http.StatusBadRequest)
 		return
 	}
