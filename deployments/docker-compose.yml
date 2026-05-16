@@ -1,0 +1,51 @@
+services:
+  app:
+    image: golang:1.24
+    working_dir: /workspace
+    command: go run ./cmd/radiance
+    ports:
+      - "8080:8080"
+    environment:
+      RADIANCE_ADDR: ":8080"
+      LIVEKIT_URL: "ws://localhost:7880"
+    volumes:
+      - ..:/workspace
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: radiance
+      POSTGRES_USER: radiance
+      POSTGRES_PASSWORD: radiance
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev --bind 0.0.0.0
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-50100:50000-50100/udp"
+
+  coturn:
+    image: coturn/coturn:latest
+    command: ["-n", "--log-file=stdout", "--min-port=49160", "--max-port=49200", "--lt-cred-mech", "--user=radiance:radiance", "--realm=radiance.local"]
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "49160-49200:49160-49200/udp"
+
+volumes:
+  postgres_data:
+

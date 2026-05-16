@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Radiance</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">R</div>
+          <div>
+            <h1>Radiance</h1>
+            <p>Audio and video rooms</p>
+          </div>
+        </div>
+
+        <section id="authPanel" class="panel">
+          <div class="tabs">
+            <button id="loginTab" class="active" type="button">Вход</button>
+            <button id="registerTab" type="button">Регистрация</button>
+          </div>
+          <label>
+            Имя
+            <input id="nameInput" autocomplete="name" placeholder="Анна">
+          </label>
+          <label>
+            Email
+            <input id="emailInput" type="email" autocomplete="email" placeholder="anna@example.com">
+          </label>
+          <label>
+            Пароль
+            <input id="passwordInput" type="password" autocomplete="current-password" placeholder="••••">
+          </label>
+          <button id="authButton" class="primary" type="button">Войти</button>
+        </section>
+
+        <section id="profilePanel" class="panel hidden">
+          <div class="profile">
+            <div>
+              <strong id="profileName"></strong>
+              <span id="profileEmail"></span>
+            </div>
+            <button id="logoutButton" class="ghost" type="button">Выйти</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Новая комната</h2>
+          <label>
+            Название
+            <input id="roomNameInput" placeholder="Ежедневный созвон">
+          </label>
+          <label>
+            Описание
+            <input id="roomDescriptionInput" placeholder="Команда продукта">
+          </label>
+          <div class="segmented">
+            <button id="publicRoomButton" class="active" type="button">Публичная</button>
+            <button id="privateRoomButton" type="button">Приватная</button>
+          </div>
+          <button id="createRoomButton" class="primary" type="button">Создать</button>
+        </section>
+
+        <section class="panel grow">
+          <div class="section-row">
+            <h2>Комнаты</h2>
+            <button id="refreshRoomsButton" class="icon" type="button" title="Обновить">↻</button>
+          </div>
+          <div id="roomsList" class="list"></div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <h2 id="roomTitle">Выберите или создайте комнату</h2>
+            <p id="roomMeta">До 15 участников, чат и базовая модерация.</p>
+          </div>
+          <div class="actions">
+            <button id="copyInviteButton" class="ghost hidden" type="button">Ссылка</button>
+            <button id="leaveRoomButton" class="ghost hidden" type="button">Выйти</button>
+            <button id="endRoomButton" class="danger hidden" type="button">Завершить</button>
+          </div>
+        </header>
+
+        <section class="stage">
+          <div class="video-grid">
+            <article class="tile local-tile">
+              <video id="localVideo" muted autoplay playsinline></video>
+              <div class="tile-footer">
+                <span>Вы</span>
+                <span id="localState">камера выключена</span>
+              </div>
+            </article>
+            <div id="participantTiles" class="participant-tiles"></div>
+          </div>
+          <div class="call-controls">
+            <button id="micButton" class="round" type="button" title="Микрофон">Mic</button>
+            <button id="cameraButton" class="round" type="button" title="Камера">Cam</button>
+            <button id="joinMediaButton" class="primary" type="button">Подключиться к звонку</button>
+          </div>
+        </section>
+      </section>
+
+      <aside class="rightbar">
+        <section class="panel participants-panel">
+          <h2>Участники</h2>
+          <div id="participantsList" class="list"></div>
+        </section>
+        <section class="panel chat-panel">
+          <h2>Чат</h2>
+          <div id="messagesList" class="messages"></div>
+          <form id="messageForm" class="message-form">
+            <input id="messageInput" placeholder="Сообщение" autocomplete="off">
+            <button class="primary" type="submit">Отправить</button>
+          </form>
+        </section>
+      </aside>
+    </main>
+    <div id="toast" class="toast hidden"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
+
