@@ -1,0 +1,10 @@
+.git
+.agents
+.codex
+data
+web/app/node_modules
+web/app/dist
+*.docx
+*.xlsx
+*.tmp
+

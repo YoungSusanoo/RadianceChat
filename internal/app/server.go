@@ -17,7 +17,6 @@ import (
 type Config struct {
 	Addr             string
 	StaticDir        string
-	DataFile         string
 	LiveKitURL       string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
@@ -26,12 +25,16 @@ type Config struct {
 type Server struct {
 	cfg    Config
 	log    *slog.Logger
-	store  *Store
+	store  Store
 	broker *realtime.Broker
 }
 
 func NewServer(cfg Config, logger *slog.Logger) *Server {
-	return &Server{cfg: cfg, log: logger, store: NewStore(cfg.DataFile), broker: realtime.NewBroker()}
+	return NewServerWithStore(cfg, logger, NewMemoryStore())
+}
+
+func NewServerWithStore(cfg Config, logger *slog.Logger, store Store) *Server {
+	return &Server{cfg: cfg, log: logger, store: store, broker: realtime.NewBroker()}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -213,13 +216,16 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.broker.Publish(roomID, "participant.joined", participant)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"room": room, "participant": participant, "participants": participants})
 	case r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "leave":
-		participant, err := s.store.LeaveRoom(roomID, user)
+		room, participant, participants, err := s.store.LeaveRoom(roomID, user)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		s.broker.Publish(roomID, "participant.left", participant)
-		writeJSON(w, http.StatusOK, participant)
+		if !room.Active {
+			s.broker.Publish(roomID, "room.ended", room)
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"room": room, "participant": participant, "participants": participants})
 	case r.Method == http.MethodPatch && len(parts) == 2 && parts[1] == "device":
 		var req struct {
 			Muted    bool `json:"muted"`
