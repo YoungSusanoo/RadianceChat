@@ -13,9 +13,12 @@ import (
 
 func main() {
 	cfg := app.Config{
-		Addr:       env("RADIANCE_ADDR", ":8080"),
-		StaticDir:  env("RADIANCE_STATIC_DIR", "web/static"),
-		LiveKitURL: env("LIVEKIT_URL", "ws://localhost:7880"),
+		Addr:             env("RADIANCE_ADDR", ":8080"),
+		StaticDir:        env("RADIANCE_STATIC_DIR", "web/static"),
+		DataFile:         env("RADIANCE_DATA_FILE", "data/radiance.json"),
+		LiveKitURL:       env("LIVEKIT_URL", "ws://localhost:7880"),
+		LiveKitAPIKey:    env("LIVEKIT_API_KEY", "devkey"),
+		LiveKitAPISecret: env("LIVEKIT_API_SECRET", "secret"),
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))

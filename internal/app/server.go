@@ -13,9 +13,12 @@ import (
 )
 
 type Config struct {
-	Addr       string
-	StaticDir  string
-	LiveKitURL string
+	Addr             string
+	StaticDir        string
+	DataFile         string
+	LiveKitURL       string
+	LiveKitAPIKey    string
+	LiveKitAPISecret string
 }
 
 type Server struct {
@@ -26,7 +29,7 @@ type Server struct {
 }
 
 func NewServer(cfg Config, logger *slog.Logger) *Server {
-	return &Server{cfg: cfg, log: logger, store: NewStore(), broker: realtime.NewBroker()}
+	return &Server{cfg: cfg, log: logger, store: NewStore(cfg.DataFile), broker: realtime.NewBroker()}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -57,6 +60,9 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/app.js") || strings.HasPrefix(r.URL.Path, "/styles.css") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 		s.log.Info("request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(start))
 	})
@@ -166,7 +172,7 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && len(parts) == 1:
-		room, participants, err := s.store.Room(roomID)
+		room, participants, err := s.store.RoomForUser(roomID, user)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -212,7 +218,7 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.broker.Publish(roomID, "room.ended", room)
 		writeJSON(w, http.StatusOK, room)
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[1] == "messages":
-		messages, err := s.store.Messages(roomID)
+		messages, err := s.store.MessagesForUser(roomID, user)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -235,10 +241,15 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[1] == "events":
 		s.streamEvents(w, r, roomID)
 	case r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "media-token":
+		token, err := s.mediaToken(roomID, user)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{
-			"mode":       "prototype-local-media",
+			"mode":       "livekit",
 			"livekitUrl": s.cfg.LiveKitURL,
-			"token":      "configure-livekit-secret-for-real-sfu-token",
+			"token":      token,
 		})
 	case len(parts) == 3 && parts[1] == "participants":
 		s.participantAction(w, r, roomID, parts[2], user)
@@ -293,7 +304,7 @@ func (s *Server) inviteSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "join" {
-		room, participant, participants, err := s.store.JoinRoom(room.ID, user)
+		room, participant, participants, err := s.store.JoinRoomByInvite(room.ID, user)
 		if err != nil {
 			writeError(w, err)
 			return

@@ -23,7 +23,7 @@ LiveKit SFU
   -> coturn: TURN relay for NAT/firewall cases
 ```
 
-The current repository implements `Browser Client -> Go Backend` and local camera/microphone preview. LiveKit integration is represented by `/api/v1/rooms/{roomId}/media-token`.
+The current repository implements `Browser Client -> Go Backend`, local JSON persistence for the prototype, LiveKit token issuing and browser-side LiveKit connection. If LiveKit is not running, the UI falls back to local camera/microphone preview.
 
 ## Domains
 
@@ -48,13 +48,15 @@ call_participants(call_id, user_id, joined_at, left_at)
 audit_events(id, actor_id, room_id, type, payload, created_at)
 ```
 
+The physical PostgreSQL schema is in `migrations/001_init.sql`.
+
 ## Availability Preference
 
 The system should prefer availability for realtime interaction. Strong consistency is important for authentication and room ownership, but participant presence, chat delivery and media state may be eventually consistent under failures.
 
 ## Scaling Path
 
-1. Replace in-memory store with PostgreSQL.
+1. Replace prototype JSON persistence with PostgreSQL.
 2. Replace in-process sessions and event broker with Redis.
 3. Replace SSE with WebSocket for bidirectional realtime control.
 4. Add LiveKit SFU and coturn for real audio/video across clients.
@@ -75,4 +77,3 @@ The system should prefer availability for realtime interaction. Strong consisten
 - Presence fan-out: move from in-process broker to Redis Pub/Sub.
 - Hot rooms: cap participants at 15 according to requirements, then introduce multiple SFU nodes for larger meetings.
 - Chat write bursts: batch writes or use Redis queue before PostgreSQL.
-

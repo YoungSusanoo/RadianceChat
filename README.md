@@ -8,8 +8,8 @@ The implementation is intentionally compact: one Go backend serves the API and s
 
 - Backend: Go, standard library HTTP server
 - Frontend: static HTML/CSS/JavaScript
-- Realtime prototype: Server-Sent Events
-- Media prototype: browser `getUserMedia`
+- Realtime control plane: Server-Sent Events
+- Media plane: LiveKit SFU token issuing, with local browser preview fallback
 - Target production media layer: LiveKit SFU + coturn
 - Target storage: PostgreSQL + Redis
 - Load tests: k6
@@ -28,7 +28,26 @@ Open:
 http://localhost:8080
 ```
 
-The app stores data in memory, so restarting the process clears users, rooms and messages.
+By default the app stores a JSON snapshot in `data/radiance.json`, so users, rooms and messages survive restarts during local development.
+
+To run the supporting infrastructure for the full media scenario:
+
+```bash
+docker compose -f deployments/docker-compose.yml up
+```
+
+The compose file starts the app, PostgreSQL, Redis, LiveKit and coturn. The current Go app uses the JSON snapshot for the working prototype; PostgreSQL and Redis are included to match the planned production architecture and the course design.
+The physical PostgreSQL schema is stored in `migrations/001_init.sql`.
+
+Default LiveKit development credentials:
+
+```text
+LIVEKIT_URL=ws://localhost:7880
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+```
+
+If LiveKit or the browser SDK CDN is unavailable, the call button falls back to local camera/microphone preview so the rest of the app remains demonstrable.
 
 ## Covered Requirements
 
@@ -37,7 +56,8 @@ The app stores data in memory, so restarting the process clears users, rooms and
 - Invite links
 - Join, leave and reconnect to rooms
 - Up to 15 participants per room
-- Local microphone and camera controls
+- LiveKit media token issuing
+- Microphone and camera controls
 - Participant list during a call
 - Host role visibility
 - Host can mute or kick participants
@@ -113,5 +133,4 @@ Events:
 POST /api/v1/rooms/{roomId}/media-token
 ```
 
-For now this returns a placeholder response. In the production design this endpoint issues a signed LiveKit access token after checking that the user can join the room.
-
+Returns a signed LiveKit access token after checking that the user is a participant of the room.

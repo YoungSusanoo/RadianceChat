@@ -1,10 +1,18 @@
 package app
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +28,7 @@ var (
 
 type Store struct {
 	mu           sync.RWMutex
+	dataFile     string
 	users        map[string]User
 	usersByEmail map[string]string
 	sessions     map[string]Session
@@ -29,8 +38,9 @@ type Store struct {
 	messages     map[string][]Message
 }
 
-func NewStore() *Store {
-	return &Store{
+func NewStore(dataFile string) *Store {
+	store := &Store{
+		dataFile:     dataFile,
 		users:        map[string]User{},
 		usersByEmail: map[string]string{},
 		sessions:     map[string]Session{},
@@ -39,6 +49,8 @@ func NewStore() *Store {
 		participants: map[string]map[string]Participant{},
 		messages:     map[string][]Message{},
 	}
+	_ = store.load()
+	return store
 }
 
 func (s *Store) Register(name, email, password string) (User, string, error) {
@@ -53,10 +65,15 @@ func (s *Store) Register(name, email, password string) (User, string, error) {
 		return User{}, "", ErrConflict
 	}
 
-	user := User{ID: token(12), Name: name, Email: email, Password: password, CreatedAt: time.Now().UTC()}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return User{}, "", err
+	}
+	user := User{ID: token(12), Name: name, Email: email, PasswordHash: passwordHash, CreatedAt: time.Now().UTC()}
 	s.users[user.ID] = user
 	s.usersByEmail[email] = user.ID
 	session := s.createSessionLocked(user.ID)
+	_ = s.saveLocked()
 	return user, session.Token, nil
 }
 
@@ -69,10 +86,11 @@ func (s *Store) Login(email, password string) (User, string, error) {
 		return User{}, "", ErrUnauthorized
 	}
 	user := s.users[id]
-	if user.Password != password {
+	if !verifyPassword(password, user.PasswordHash) {
 		return User{}, "", ErrUnauthorized
 	}
 	session := s.createSessionLocked(user.ID)
+	_ = s.saveLocked()
 	return user, session.Token, nil
 }
 
@@ -80,6 +98,7 @@ func (s *Store) Logout(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, token)
+	_ = s.saveLocked()
 }
 
 func (s *Store) UserByToken(token string) (User, error) {
@@ -123,6 +142,7 @@ func (s *Store) CreateRoom(host User, name, description, visibility string) (Roo
 	s.rooms[room.ID] = room
 	s.invites[room.InviteToken] = room.ID
 	s.participants[room.ID] = map[string]Participant{host.ID: participant}
+	_ = s.saveLocked()
 	return room, participant, nil
 }
 
@@ -149,6 +169,21 @@ func (s *Store) Room(id string) (Room, []Participant, error) {
 	return room, s.participantsLocked(id), nil
 }
 
+func (s *Store) RoomForUser(id string, user User) (Room, []Participant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	room, ok := s.rooms[id]
+	if !ok {
+		return Room{}, nil, ErrNotFound
+	}
+	if room.Visibility == "private" {
+		if _, ok := s.participants[id][user.ID]; !ok {
+			return Room{}, nil, ErrForbidden
+		}
+	}
+	return room, s.participantsLocked(id), nil
+}
+
 func (s *Store) RoomByInvite(invite string) (Room, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -166,6 +201,16 @@ func (s *Store) RoomByInvite(invite string) (Room, error) {
 func (s *Store) JoinRoom(roomID string, user User) (Room, Participant, []Participant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.joinRoomLocked(roomID, user, false)
+}
+
+func (s *Store) JoinRoomByInvite(roomID string, user User) (Room, Participant, []Participant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.joinRoomLocked(roomID, user, true)
+}
+
+func (s *Store) joinRoomLocked(roomID string, user User, viaInvite bool) (Room, Participant, []Participant, error) {
 	room, ok := s.rooms[roomID]
 	if !ok || !room.Active {
 		return Room{}, Participant{}, nil, ErrNotFound
@@ -176,6 +221,9 @@ func (s *Store) JoinRoom(roomID string, user User) (Room, Participant, []Partici
 	now := time.Now().UTC()
 	p, ok := s.participants[roomID][user.ID]
 	if !ok {
+		if room.Visibility == "private" && !viaInvite {
+			return Room{}, Participant{}, nil, ErrForbidden
+		}
 		if len(s.participants[roomID]) >= 15 {
 			return Room{}, Participant{}, nil, ErrConflict
 		}
@@ -184,6 +232,7 @@ func (s *Store) JoinRoom(roomID string, user User) (Room, Participant, []Partici
 	p.LastSeen = now
 	p.Connected = true
 	s.participants[roomID][user.ID] = p
+	_ = s.saveLocked()
 	return room, p, s.participantsLocked(roomID), nil
 }
 
@@ -197,6 +246,7 @@ func (s *Store) LeaveRoom(roomID string, user User) (Participant, error) {
 	p.Connected = false
 	p.LastSeen = time.Now().UTC()
 	s.participants[roomID][user.ID] = p
+	_ = s.saveLocked()
 	return p, nil
 }
 
@@ -211,6 +261,7 @@ func (s *Store) SetDevice(roomID string, user User, muted, cameraOn bool) (Parti
 	p.CameraOn = cameraOn
 	p.LastSeen = time.Now().UTC()
 	s.participants[roomID][user.ID] = p
+	_ = s.saveLocked()
 	return p, nil
 }
 
@@ -227,6 +278,7 @@ func (s *Store) MuteParticipant(roomID, targetID string, actor User) (Participan
 	p.Muted = true
 	p.LastSeen = time.Now().UTC()
 	s.participants[roomID][targetID] = p
+	_ = s.saveLocked()
 	return p, nil
 }
 
@@ -241,6 +293,7 @@ func (s *Store) KickParticipant(roomID, targetID string, actor User) (Participan
 		return Participant{}, ErrNotFound
 	}
 	delete(s.participants[roomID], targetID)
+	_ = s.saveLocked()
 	return p, nil
 }
 
@@ -257,6 +310,7 @@ func (s *Store) EndRoom(roomID string, actor User) (Room, error) {
 	room.Active = false
 	room.EndedAt = time.Now().UTC()
 	s.rooms[roomID] = room
+	_ = s.saveLocked()
 	return room, nil
 }
 
@@ -266,7 +320,11 @@ func (s *Store) AddMessage(roomID string, user User, text string) (Message, erro
 	if strings.TrimSpace(text) == "" {
 		return Message{}, ErrBadRequest
 	}
-	if _, ok := s.rooms[roomID]; !ok {
+	room, ok := s.rooms[roomID]
+	if !ok {
+		return Message{}, ErrNotFound
+	}
+	if !room.Active {
 		return Message{}, ErrNotFound
 	}
 	if _, ok := s.participants[roomID][user.ID]; !ok {
@@ -277,6 +335,7 @@ func (s *Store) AddMessage(roomID string, user User, text string) (Message, erro
 	if len(s.messages[roomID]) > 200 {
 		s.messages[roomID] = s.messages[roomID][len(s.messages[roomID])-200:]
 	}
+	_ = s.saveLocked()
 	return msg, nil
 }
 
@@ -286,8 +345,33 @@ func (s *Store) Messages(roomID string) ([]Message, error) {
 	if _, ok := s.rooms[roomID]; !ok {
 		return nil, ErrNotFound
 	}
+	if s.messages[roomID] == nil {
+		return []Message{}, nil
+	}
 	out := append([]Message(nil), s.messages[roomID]...)
 	return out, nil
+}
+
+func (s *Store) MessagesForUser(roomID string, user User) ([]Message, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.rooms[roomID]; !ok {
+		return nil, ErrNotFound
+	}
+	if _, ok := s.participants[roomID][user.ID]; !ok {
+		return nil, ErrForbidden
+	}
+	if s.messages[roomID] == nil {
+		return []Message{}, nil
+	}
+	return append([]Message(nil), s.messages[roomID]...), nil
+}
+
+func (s *Store) IsParticipant(roomID, userID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.participants[roomID][userID]
+	return ok
 }
 
 func (s *Store) createSessionLocked(userID string) Session {
@@ -321,4 +405,178 @@ func token(bytes int) string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf)
+}
+
+type storeSnapshot struct {
+	Users        []persistedUser          `json:"users"`
+	Sessions     []Session                `json:"sessions"`
+	Rooms        []Room                   `json:"rooms"`
+	Participants map[string][]Participant `json:"participants"`
+	Messages     map[string][]Message     `json:"messages"`
+	SavedAt      time.Time                `json:"savedAt"`
+}
+
+type persistedUser struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"passwordHash"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+func (s *Store) load() error {
+	if s.dataFile == "" {
+		return nil
+	}
+	payload, err := os.ReadFile(s.dataFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var snapshot storeSnapshot
+	if err := json.Unmarshal(payload, &snapshot); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, persisted := range snapshot.Users {
+		user := User{
+			ID:           persisted.ID,
+			Name:         persisted.Name,
+			Email:        strings.ToLower(persisted.Email),
+			PasswordHash: persisted.PasswordHash,
+			CreatedAt:    persisted.CreatedAt,
+		}
+		s.users[user.ID] = user
+		s.usersByEmail[user.Email] = user.ID
+	}
+	for _, session := range snapshot.Sessions {
+		if now.Before(session.ExpiresAt) {
+			s.sessions[session.Token] = session
+		}
+	}
+	for _, room := range snapshot.Rooms {
+		s.rooms[room.ID] = room
+		s.invites[room.InviteToken] = room.ID
+	}
+	for roomID, participants := range snapshot.Participants {
+		s.participants[roomID] = map[string]Participant{}
+		for _, participant := range participants {
+			participant.Connected = false
+			s.participants[roomID][participant.UserID] = participant
+		}
+	}
+	for roomID, messages := range snapshot.Messages {
+		s.messages[roomID] = append([]Message(nil), messages...)
+	}
+	return nil
+}
+
+func (s *Store) saveLocked() error {
+	if s.dataFile == "" {
+		return nil
+	}
+	snapshot := storeSnapshot{
+		Users:        make([]persistedUser, 0, len(s.users)),
+		Sessions:     make([]Session, 0, len(s.sessions)),
+		Rooms:        make([]Room, 0, len(s.rooms)),
+		Participants: map[string][]Participant{},
+		Messages:     map[string][]Message{},
+		SavedAt:      time.Now().UTC(),
+	}
+	for _, user := range s.users {
+		snapshot.Users = append(snapshot.Users, persistedUser{
+			ID:           user.ID,
+			Name:         user.Name,
+			Email:        user.Email,
+			PasswordHash: user.PasswordHash,
+			CreatedAt:    user.CreatedAt,
+		})
+	}
+	for _, session := range s.sessions {
+		if time.Now().UTC().Before(session.ExpiresAt) {
+			snapshot.Sessions = append(snapshot.Sessions, session)
+		}
+	}
+	for _, room := range s.rooms {
+		snapshot.Rooms = append(snapshot.Rooms, room)
+	}
+	for roomID, participants := range s.participants {
+		for _, participant := range participants {
+			snapshot.Participants[roomID] = append(snapshot.Participants[roomID], participant)
+		}
+	}
+	for roomID, messages := range s.messages {
+		snapshot.Messages[roomID] = append([]Message(nil), messages...)
+	}
+	sort.Slice(snapshot.Users, func(i, j int) bool { return snapshot.Users[i].CreatedAt.Before(snapshot.Users[j].CreatedAt) })
+	sort.Slice(snapshot.Rooms, func(i, j int) bool { return snapshot.Rooms[i].CreatedAt.Before(snapshot.Rooms[j].CreatedAt) })
+
+	payload, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.dataFile), 0o755); err != nil {
+		return err
+	}
+	tmp := s.dataFile + ".tmp"
+	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.dataFile)
+}
+
+func hashPassword(password string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	iterations := 120000
+	sum := pbkdf2SHA256([]byte(password), salt, iterations, 32)
+	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", iterations, b64(salt), b64(sum)), nil
+}
+
+func verifyPassword(password, encoded string) bool {
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
+		return false
+	}
+	iterations, err := strconv.Atoi(parts[1])
+	if err != nil || iterations <= 0 {
+		return false
+	}
+	salt, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
+	expected, err := base64.RawURLEncoding.DecodeString(parts[3])
+	if err != nil {
+		return false
+	}
+	actual := pbkdf2SHA256([]byte(password), salt, iterations, len(expected))
+	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func pbkdf2SHA256(password, salt []byte, iterations, keyLen int) []byte {
+	var result []byte
+	block := 1
+	for len(result) < keyLen {
+		mac := hmac.New(sha256.New, password)
+		_, _ = mac.Write(salt)
+		_, _ = mac.Write([]byte{byte(block >> 24), byte(block >> 16), byte(block >> 8), byte(block)})
+		u := mac.Sum(nil)
+		t := append([]byte(nil), u...)
+		for i := 1; i < iterations; i++ {
+			mac = hmac.New(sha256.New, password)
+			_, _ = mac.Write(u)
+			u = mac.Sum(nil)
+			for j := range t {
+				t[j] ^= u[j]
+			}
+		}
+		result = append(result, t...)
+		block++
+	}
+	return result[:keyLen]
 }
