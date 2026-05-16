@@ -245,7 +245,7 @@ func (s *Store) LeaveRoom(roomID string, user User) (Participant, error) {
 	}
 	p.Connected = false
 	p.LastSeen = time.Now().UTC()
-	s.participants[roomID][user.ID] = p
+	delete(s.participants[roomID], user.ID)
 	_ = s.saveLocked()
 	return p, nil
 }

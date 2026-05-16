@@ -1,18 +1,19 @@
 services:
   app:
-    image: golang:1.24
-    working_dir: /workspace
-    command: go run ./cmd/radiance
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
     ports:
       - "8080:8080"
     environment:
       RADIANCE_ADDR: ":8080"
-      RADIANCE_DATA_FILE: "/workspace/data/radiance.json"
+      RADIANCE_STATIC_DIR: "/app/web"
+      RADIANCE_DATA_FILE: "/app/data/radiance.json"
       LIVEKIT_URL: "ws://localhost:7880"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "secret"
     volumes:
-      - ..:/workspace
+      - app_data:/app/data
     depends_on:
       - postgres
       - redis
@@ -50,4 +51,5 @@ services:
       - "49160-49200:49160-49200/udp"
 
 volumes:
+  app_data:
   postgres_data:

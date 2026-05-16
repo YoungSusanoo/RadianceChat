@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,15 +54,35 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/invites/", s.inviteSubroutes)
 	mux.HandleFunc("POST /api/v1/invites/", s.inviteSubroutes)
 
-	mux.Handle("/", http.FileServer(http.Dir(s.cfg.StaticDir)))
+	mux.Handle("/", s.staticHandler())
 	return s.withMiddleware(mux)
+}
+
+func (s *Server) staticHandler() http.Handler {
+	files := http.FileServer(http.Dir(s.cfg.StaticDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, ErrNotFound)
+			return
+		}
+		path := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if path == "." {
+			path = "index.html"
+		}
+		fullPath := filepath.Join(s.cfg.StaticDir, path)
+		if _, err := os.Stat(fullPath); err != nil {
+			http.ServeFile(w, r, filepath.Join(s.cfg.StaticDir, "index.html"))
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/app.js") || strings.HasPrefix(r.URL.Path, "/styles.css") {
+		if r.URL.Path == "/" || strings.HasSuffix(r.URL.Path, ".html") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)
@@ -153,7 +175,11 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"room": room, "participant": participant})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"room":         room,
+		"participant":  participant,
+		"participants": []Participant{participant},
+	})
 }
 
 func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {

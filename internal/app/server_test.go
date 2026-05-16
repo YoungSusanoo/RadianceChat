@@ -38,11 +38,15 @@ func TestHappyPath(t *testing.T) {
 		t.Fatalf("create room status = %d, body = %s", createRoom.Code, createRoom.Body.String())
 	}
 	var roomPayload struct {
-		Room Room `json:"room"`
+		Room         Room          `json:"room"`
+		Participants []Participant `json:"participants"`
 	}
 	decodeTest(t, createRoom, &roomPayload)
 	if roomPayload.Room.ID == "" {
 		t.Fatal("expected room id")
+	}
+	if len(roomPayload.Participants) != 1 || roomPayload.Participants[0].Role != "host" {
+		t.Fatalf("expected host participant in create room response: %+v", roomPayload.Participants)
 	}
 
 	message := post(t, handler, "/api/v1/rooms/"+roomPayload.Room.ID+"/messages", auth.Token, map[string]string{
@@ -50,6 +54,16 @@ func TestHappyPath(t *testing.T) {
 	})
 	if message.Code != http.StatusCreated {
 		t.Fatalf("message status = %d, body = %s", message.Code, message.Body.String())
+	}
+
+	leave := post(t, handler, "/api/v1/rooms/"+roomPayload.Room.ID+"/leave", auth.Token, map[string]string{})
+	if leave.Code != http.StatusOK {
+		t.Fatalf("leave status = %d, body = %s", leave.Code, leave.Body.String())
+	}
+
+	messagesAfterLeave := get(t, handler, "/api/v1/rooms/"+roomPayload.Room.ID+"/messages", auth.Token)
+	if messagesAfterLeave.Code != http.StatusForbidden {
+		t.Fatalf("messages after leave status = %d, body = %s", messagesAfterLeave.Code, messagesAfterLeave.Body.String())
 	}
 }
 
@@ -64,6 +78,20 @@ func post(t *testing.T, handler http.Handler, path, token string, payload interf
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	return res
+}
+
+func get(t *testing.T, handler http.Handler, path, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
