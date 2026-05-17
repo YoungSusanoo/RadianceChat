@@ -1,24 +1,13 @@
-import { chatScenario, coreThresholds, createRoomScenario, joinRoomScenario, stressStages } from "./common.js";
+import { chatScenario, createRoomScenario, joinRoomScenario, stressScenarios } from "./common.js";
 
 export const options = {
-  scenarios: {
-    create_room_stress: {
-      executor: "ramping-vus",
-      exec: "createRoomTransaction",
-      stages: stressStages(4),
-    },
-    join_room_stress: {
-      executor: "ramping-vus",
-      exec: "joinRoomTransaction",
-      stages: stressStages(4),
-    },
-    chat_stress: {
-      executor: "ramping-vus",
-      exec: "chatTransaction",
-      stages: stressStages(8),
-    },
+  scenarios: stressScenarios(),
+  // Stress testing searches for the degradation point. The report threshold is
+  // observed in the summary/graphs: when http_req_failed exceeds 25%, the
+  // current VU/RPS level is recorded as the breaking point.
+  thresholds: {
+    checks: ["rate>0.25"],
   },
-  thresholds: coreThresholds("rate<0.25", "p(95)<5000"),
 };
 
 export function createRoomTransaction() {

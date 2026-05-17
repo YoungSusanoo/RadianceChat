@@ -219,43 +219,59 @@ export function coreThresholds(failedRate = "rate<0.10", duration = "p(95)<3000"
   };
 }
 
-export function coreLoadScenarios(multiplier = 1) {
-  return {
-    create_room: {
-      executor: "ramping-vus",
-      exec: "createRoomTransaction",
-      stages: [
-        { duration: "5m", target: 4 * multiplier },
-        { duration: "10m", target: 4 * multiplier },
-        { duration: "5m", target: 0 },
-      ],
-    },
-    join_room: {
-      executor: "ramping-vus",
-      exec: "joinRoomTransaction",
-      stages: [
-        { duration: "5m", target: 4 * multiplier },
-        { duration: "10m", target: 4 * multiplier },
-        { duration: "5m", target: 0 },
-      ],
-    },
-    chat: {
-      executor: "ramping-vus",
-      exec: "chatTransaction",
-      stages: [
-        { duration: "5m", target: 8 * multiplier },
-        { duration: "10m", target: 8 * multiplier },
-        { duration: "5m", target: 0 },
-      ],
-    },
-  };
-}
-
-export function stressStages(baseTarget, steps = 60) {
-  const stages = [{ duration: "5m", target: baseTarget }];
-  for (let index = 1; index <= steps; index += 1) {
-    stages.push({ duration: "10s", target: Math.ceil(baseTarget * (1 + index * 0.1)) });
+export function arrivalStages(targetRatePerMinute, steps = 0) {
+  const stages = [{ duration: "5m", target: targetRatePerMinute }];
+  if (steps > 0) {
+    for (let index = 1; index <= steps; index += 1) {
+      stages.push({ duration: "10s", target: Math.ceil(targetRatePerMinute * (1 + index * 0.1)) });
+    }
+  } else {
+    stages.push({ duration: "10m", target: targetRatePerMinute });
   }
   stages.push({ duration: "5m", target: 0 });
   return stages;
+}
+
+export function arrivalScenario(exec, targetRatePerMinute, preAllocatedVUs, maxVUs, steps = 0) {
+  return {
+    executor: "ramping-arrival-rate",
+    exec,
+    startRate: 0,
+    timeUnit: "1m",
+    preAllocatedVUs,
+    maxVUs,
+    stages: arrivalStages(targetRatePerMinute, steps),
+  };
+}
+
+export function coreLoadScenarios(multiplier = 1) {
+  return {
+    create_room: arrivalScenario("createRoomTransaction", 4 * multiplier, 4 * multiplier, 20 * multiplier),
+    join_room: arrivalScenario("joinRoomTransaction", 65 * multiplier, 20 * multiplier, 120 * multiplier),
+    chat: arrivalScenario("chatTransaction", 45 * multiplier, 12 * multiplier, 80 * multiplier),
+  };
+}
+
+export function x10Scenarios() {
+  return {
+    create_room: arrivalScenario("createRoomTransaction", 40, 40, 120),
+    join_room: arrivalScenario("joinRoomTransaction", 450, 120, 500),
+    chat: arrivalScenario("chatTransaction", 195, 80, 300),
+  };
+}
+
+export function stressScenarios(steps = 60) {
+  return {
+    create_room_stress: arrivalScenario("createRoomTransaction", 4, 4, 80, steps),
+    join_room_stress: arrivalScenario("joinRoomTransaction", 65, 20, 500, steps),
+    chat_stress: arrivalScenario("chatTransaction", 45, 12, 300, steps),
+  };
+}
+
+export function stressBreakpointScenarios(steps = 120) {
+  return {
+    create_room_breakpoint: arrivalScenario("createRoomTransaction", 8, 8, 160, steps),
+    join_room_breakpoint: arrivalScenario("joinRoomTransaction", 90, 30, 800, steps),
+    chat_breakpoint: arrivalScenario("chatTransaction", 70, 20, 500, steps),
+  };
 }

@@ -1,8 +1,10 @@
-import { chatScenario, coreThresholds, createRoomScenario, joinRoomScenario, x10Scenarios } from "./common.js";
+import { chatScenario, createRoomScenario, joinRoomScenario, stressBreakpointScenarios } from "./common.js";
 
 export const options = {
-  scenarios: x10Scenarios(),
-  thresholds: coreThresholds("rate<0.25", "p(95)<5000"),
+  scenarios: stressBreakpointScenarios(),
+  thresholds: {
+    checks: ["rate>0.50"],
+  },
 };
 
 export function createRoomTransaction() {

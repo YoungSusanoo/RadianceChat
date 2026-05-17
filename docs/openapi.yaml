@@ -150,7 +150,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/PublicRoom"
+                  $ref: "#/components/schemas/RoomSummary"
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
@@ -168,7 +168,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoomPayload"
+                $ref: "#/components/schemas/RoomState"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -186,7 +186,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoomPayload"
+                $ref: "#/components/schemas/RoomState"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -206,7 +206,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoomPayload"
+                $ref: "#/components/schemas/RoomState"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -223,12 +223,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RoomId"
       responses:
-        "200":
+        "204":
           description: Left room
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RoomPayload"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -242,12 +238,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RoomId"
       responses:
-        "200":
+        "204":
           description: Room ended
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Room"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -288,12 +280,8 @@ paths:
         - $ref: "#/components/parameters/RoomId"
         - $ref: "#/components/parameters/UserId"
       responses:
-        "200":
+        "204":
           description: Muted participant
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Participant"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -308,12 +296,8 @@ paths:
         - $ref: "#/components/parameters/RoomId"
         - $ref: "#/components/parameters/UserId"
       responses:
-        "200":
+        "204":
           description: Removed participant
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Participant"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -430,7 +414,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Room"
+                $ref: "#/components/schemas/InvitePreview"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -448,7 +432,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoomPayload"
+                $ref: "#/components/schemas/RoomState"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -594,14 +578,12 @@ components:
           type: string
           example: 2e9f7d2b4e8a4f0fa2d4c7
 
-    RoomPayload:
+    RoomState:
       type: object
       required: [room, participants]
       properties:
         room:
           $ref: "#/components/schemas/Room"
-        participant:
-          $ref: "#/components/schemas/Participant"
         participants:
           type: array
           items:
@@ -666,16 +648,78 @@ components:
           type: string
           format: date-time
 
-    PublicRoom:
-      allOf:
-        - $ref: "#/components/schemas/Room"
-        - type: object
-          required: [participants]
-          properties:
-            participants:
-              type: integer
-              minimum: 0
-              example: 3
+    RoomSummary:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - visibility
+        - hostId
+        - active
+        - createdAt
+        - participants
+      properties:
+        id:
+          type: string
+          example: room_123
+        name:
+          type: string
+          example: Daily call
+        description:
+          type: string
+          example: Team sync
+        visibility:
+          type: string
+          enum: [public, private]
+          example: public
+        hostId:
+          type: string
+          example: user_123
+        active:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+        participants:
+          type: integer
+          minimum: 0
+          example: 3
+
+    InvitePreview:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - visibility
+        - hostId
+        - active
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: room_123
+        name:
+          type: string
+          example: Daily call
+        description:
+          type: string
+          example: Team sync
+        visibility:
+          type: string
+          enum: [public, private]
+          example: private
+        hostId:
+          type: string
+          example: user_123
+        active:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
 
     Participant:
       type: object
