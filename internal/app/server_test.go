@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -64,6 +65,33 @@ func TestHappyPath(t *testing.T) {
 	messagesAfterLeave := get(t, handler, "/api/v1/rooms/"+roomPayload.Room.ID+"/messages", auth.Token)
 	if messagesAfterLeave.Code != http.StatusForbidden {
 		t.Fatalf("messages after leave status = %d, body = %s", messagesAfterLeave.Code, messagesAfterLeave.Body.String())
+	}
+}
+
+func TestHealthEndpoints(t *testing.T) {
+	server := NewServer(Config{StaticDir: "../../web/static"}, slog.Default())
+	handler := server.Routes()
+
+	live := get(t, handler, "/health/live", "")
+	if live.Code != http.StatusOK {
+		t.Fatalf("live status = %d, body = %s", live.Code, live.Body.String())
+	}
+
+	ready := get(t, handler, "/health/ready", "")
+	if ready.Code != http.StatusOK {
+		t.Fatalf("ready status = %d, body = %s", ready.Code, ready.Body.String())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/health/ready", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailable := httptest.NewRecorder()
+	handler.ServeHTTP(unavailable, req)
+	if unavailable.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unavailable ready status = %d, body = %s", unavailable.Code, unavailable.Body.String())
 	}
 }
 

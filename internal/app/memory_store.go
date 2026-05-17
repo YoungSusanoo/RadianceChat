@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +31,10 @@ func NewMemoryStore() *MemoryStore {
 		participants: map[string]map[string]Participant{},
 		messages:     map[string][]Message{},
 	}
+}
+
+func (s *MemoryStore) Ping(ctx context.Context) error {
+	return ctx.Err()
 }
 
 func (s *MemoryStore) Register(name, email, password string) (User, string, error) {

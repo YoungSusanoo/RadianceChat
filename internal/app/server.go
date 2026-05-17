@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,15 +19,17 @@ type Config struct {
 	Addr             string
 	StaticDir        string
 	LiveKitURL       string
+	LiveKitAPIURL    string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
 }
 
 type Server struct {
-	cfg    Config
-	log    *slog.Logger
-	store  Store
-	broker *realtime.Broker
+	cfg          Config
+	log          *slog.Logger
+	store        Store
+	broker       *realtime.Broker
+	mediaControl MediaControl
 }
 
 func NewServer(cfg Config, logger *slog.Logger) *Server {
@@ -34,13 +37,19 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 }
 
 func NewServerWithStore(cfg Config, logger *slog.Logger, store Store) *Server {
-	return &Server{cfg: cfg, log: logger, store: store, broker: realtime.NewBroker()}
+	return &Server{
+		cfg:          cfg,
+		log:          logger,
+		store:        store,
+		broker:       realtime.NewBroker(),
+		mediaControl: NewLiveKitControl(cfg),
+	}
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health/live", s.health)
-	mux.HandleFunc("GET /health/ready", s.health)
+	mux.HandleFunc("GET /health/live", s.healthLive)
+	mux.HandleFunc("GET /health/ready", s.healthReady)
 	mux.HandleFunc("GET /metrics", s.metrics)
 
 	mux.HandleFunc("POST /api/v1/auth/register", s.register)
@@ -93,7 +102,19 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+func (s *Server) healthLive(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) healthReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := s.store.Ping(ctx); err != nil {
+		s.log.Warn("readiness check failed", "error", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -221,8 +242,14 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
+		if err := s.mediaControl.RemoveParticipant(r.Context(), roomID, user.ID); err != nil {
+			s.log.Warn("livekit leave disconnect failed", "room", roomID, "user", user.ID, "error", err)
+		}
 		s.broker.Publish(roomID, "participant.left", participant)
 		if !room.Active {
+			if err := s.mediaControl.DeleteRoom(r.Context(), roomID); err != nil {
+				s.log.Warn("livekit room delete failed", "room", roomID, "error", err)
+			}
 			s.broker.Publish(roomID, "room.ended", room)
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"room": room, "participant": participant, "participants": participants})
@@ -242,6 +269,14 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.broker.Publish(roomID, "participant.device_changed", participant)
 		writeJSON(w, http.StatusOK, participant)
 	case r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "end":
+		if err := s.requireHost(roomID, user.ID); err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := s.mediaControl.DeleteRoom(r.Context(), roomID); err != nil && !errors.Is(err, ErrNotFound) {
+			writeError(w, err)
+			return
+		}
 		room, err := s.store.EndRoom(roomID, user)
 		if err != nil {
 			writeError(w, err)
@@ -293,6 +328,14 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) participantAction(w http.ResponseWriter, r *http.Request, roomID, targetID string, user User) {
 	switch r.Method {
 	case http.MethodPost:
+		if err := s.requireHostAndParticipant(roomID, targetID, user.ID); err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := s.mediaControl.MuteAudio(r.Context(), roomID, targetID); err != nil && !errors.Is(err, ErrNotFound) {
+			writeError(w, err)
+			return
+		}
 		participant, err := s.store.MuteParticipant(roomID, targetID, user)
 		if err != nil {
 			writeError(w, err)
@@ -301,6 +344,14 @@ func (s *Server) participantAction(w http.ResponseWriter, r *http.Request, roomI
 		s.broker.Publish(roomID, "participant.muted", participant)
 		writeJSON(w, http.StatusOK, participant)
 	case http.MethodDelete:
+		if err := s.requireHostAndParticipant(roomID, targetID, user.ID); err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := s.mediaControl.RemoveParticipant(r.Context(), roomID, targetID); err != nil && !errors.Is(err, ErrNotFound) {
+			writeError(w, err)
+			return
+		}
 		participant, err := s.store.KickParticipant(roomID, targetID, user)
 		if err != nil {
 			writeError(w, err)
@@ -311,6 +362,43 @@ func (s *Server) participantAction(w http.ResponseWriter, r *http.Request, roomI
 	default:
 		writeError(w, ErrNotFound)
 	}
+}
+
+func (s *Server) requireHost(roomID, actorID string) error {
+	_, participants, err := s.store.Room(roomID)
+	if err != nil {
+		return err
+	}
+	for _, participant := range participants {
+		if participant.UserID == actorID && participant.Role == "host" {
+			return nil
+		}
+	}
+	return ErrForbidden
+}
+
+func (s *Server) requireHostAndParticipant(roomID, targetID, actorID string) error {
+	_, participants, err := s.store.Room(roomID)
+	if err != nil {
+		return err
+	}
+	isHost := false
+	hasTarget := false
+	for _, participant := range participants {
+		if participant.UserID == actorID && participant.Role == "host" {
+			isHost = true
+		}
+		if participant.UserID == targetID {
+			hasTarget = true
+		}
+	}
+	if !isHost {
+		return ErrForbidden
+	}
+	if !hasTarget {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Server) inviteSubroutes(w http.ResponseWriter, r *http.Request) {

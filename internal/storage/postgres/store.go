@@ -33,6 +33,10 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+func (s *Store) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func (s *Store) Register(name, email, password string) (app.User, string, error) {
 	name = strings.TrimSpace(name)
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -214,7 +218,7 @@ func (s *Store) joinRoom(roomID string, user app.User, viaInvite bool) (app.Room
 		return app.Room{}, app.Participant{}, nil, err
 	}
 	defer tx.Rollback()
-	room, err := roomOnlyTx(tx, roomID)
+	room, err := roomOnlyForUpdateTx(tx, roomID)
 	if err != nil {
 		return app.Room{}, app.Participant{}, nil, err
 	}
@@ -479,6 +483,10 @@ func (s *Store) messages(roomID string) ([]app.Message, error) {
 
 func roomOnlyTx(tx *sql.Tx, id string) (app.Room, error) {
 	return roomOnlyQuery(tx.QueryRow("SELECT id, name, description, visibility, host_id, invite_token, active, created_at, ended_at FROM rooms WHERE id = $1", id))
+}
+
+func roomOnlyForUpdateTx(tx *sql.Tx, id string) (app.Room, error) {
+	return roomOnlyQuery(tx.QueryRow("SELECT id, name, description, visibility, host_id, invite_token, active, created_at, ended_at FROM rooms WHERE id = $1 FOR UPDATE", id))
 }
 
 func participantTx(tx *sql.Tx, roomID, userID string) (app.Participant, error) {

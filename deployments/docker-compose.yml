@@ -11,6 +11,7 @@ services:
       RADIANCE_MIGRATIONS_DIR: "/app/migrations"
       DATABASE_URL: "postgres://radiance:radiance@postgres:5432/radiance?sslmode=disable"
       LIVEKIT_URL: "ws://localhost:7880"
+      LIVEKIT_API_URL: "http://livekit:7880"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "secret"
     depends_on:

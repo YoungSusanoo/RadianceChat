@@ -1,6 +1,9 @@
 package app
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 var (
 	ErrNotFound     = errors.New("not found")
@@ -11,6 +14,8 @@ var (
 )
 
 type Store interface {
+	Ping(ctx context.Context) error
+
 	Register(name, email, password string) (User, string, error)
 	Login(email, password string) (User, string, error)
 	Logout(token string)

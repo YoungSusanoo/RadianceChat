@@ -17,6 +17,7 @@ func main() {
 		Addr:             env("RADIANCE_ADDR", ":8080"),
 		StaticDir:        env("RADIANCE_STATIC_DIR", "web/app/dist"),
 		LiveKitURL:       env("LIVEKIT_URL", "ws://localhost:7880"),
+		LiveKitAPIURL:    env("LIVEKIT_API_URL", ""),
 		LiveKitAPIKey:    env("LIVEKIT_API_KEY", "devkey"),
 		LiveKitAPISecret: env("LIVEKIT_API_SECRET", "secret"),
 	}
