@@ -1,0 +1,82 @@
+erDiagram
+    USERS {
+        text id PK
+        text name
+        text email UK
+        text password_hash
+        timestamptz created_at
+    }
+
+    SESSIONS {
+        text token PK
+        text user_id FK
+        timestamptz expires_at
+    }
+
+    ROOMS {
+        text id PK
+        text name
+        text description
+        text visibility
+        text host_id FK
+        text invite_token UK
+        boolean active
+        timestamptz created_at
+        timestamptz ended_at
+    }
+
+    ROOM_PARTICIPANTS {
+        text room_id PK
+        text user_id PK
+        text role
+        boolean muted
+        boolean camera_on
+        timestamptz joined_at
+        timestamptz last_seen
+        boolean connected
+    }
+
+    MESSAGES {
+        text id PK
+        text room_id FK
+        text user_id FK
+        text text
+        timestamptz created_at
+    }
+
+    CALLS {
+        text id PK
+        text room_id FK
+        timestamptz started_at
+        timestamptz ended_at
+    }
+
+    CALL_PARTICIPANTS {
+        text call_id PK
+        text user_id PK
+        timestamptz joined_at PK
+        timestamptz left_at
+    }
+
+    AUDIT_EVENTS {
+        text id PK
+        text actor_id FK
+        text room_id FK
+        text type
+        jsonb payload
+        timestamptz created_at
+    }
+
+    USERS ||--o{ SESSIONS : owns
+    USERS ||--o{ ROOMS : hosts
+    USERS ||--o{ ROOM_PARTICIPANTS : joins
+    USERS ||--o{ MESSAGES : sends
+    USERS ||--o{ CALL_PARTICIPANTS : attends
+    USERS ||--o{ AUDIT_EVENTS : acts
+
+    ROOMS ||--o{ ROOM_PARTICIPANTS : contains
+    ROOMS ||--o{ MESSAGES : contains
+    ROOMS ||--o{ CALLS : has
+    ROOMS ||--o{ AUDIT_EVENTS : relates_to
+
+    CALLS ||--o{ CALL_PARTICIPANTS : contains

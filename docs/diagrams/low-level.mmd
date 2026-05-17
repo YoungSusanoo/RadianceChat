@@ -1,0 +1,69 @@
+flowchart TB
+    subgraph Client["Client"]
+        web[Web application\nReact + TypeScript]
+        lkClient[LiveKit client SDK]
+    end
+
+    subgraph Gateway["API Gateway / Reverse Proxy"]
+        nginx[nginx]
+    end
+
+    subgraph APIs["Backend API"]
+        authApi[Auth API\n/register, /login, /logout, /me]
+        roomsApi[Rooms API\n/rooms, /join, /leave, /end]
+        participantsApi[Participants API\n/device, /participants/:userId]
+        messagesApi[Messages API\n/messages]
+        eventsApi[Realtime API\n/events SSE]
+        mediaApi[Media API\n/media-token]
+    end
+
+    subgraph Services["Backend Services"]
+        authService[Auth Service]
+        roomService[Room Service]
+        participantService[Participant Service]
+        chatService[Chat Service]
+        realtimeService[Realtime Event Service]
+        mediaService[Media Control Service]
+    end
+
+    subgraph Media["Media Plane"]
+        livekit[LiveKit SFU]
+        coturn[coturn TURN]
+    end
+
+    subgraph Storage["Storage"]
+        postgres[(PostgreSQL)]
+    end
+
+    web --> nginx
+    lkClient --> nginx
+    lkClient -.-> coturn
+
+    nginx --> authApi
+    nginx --> roomsApi
+    nginx --> participantsApi
+    nginx --> messagesApi
+    nginx --> eventsApi
+    nginx --> mediaApi
+    nginx --> livekit
+
+    authApi --> authService
+    roomsApi --> roomService
+    participantsApi --> participantService
+    messagesApi --> chatService
+    eventsApi --> realtimeService
+    mediaApi --> mediaService
+
+    authService --> postgres
+    roomService --> postgres
+    participantService --> postgres
+    chatService --> postgres
+    realtimeService --> postgres
+    mediaService --> postgres
+
+    roomService --> realtimeService
+    participantService --> realtimeService
+    chatService --> realtimeService
+
+    mediaService --> livekit
+    livekit -.-> coturn

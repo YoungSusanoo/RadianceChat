@@ -1,0 +1,12 @@
+flowchart LR
+    frontend[Frontend]
+    gateway[API Gateway / Reverse Proxy]
+    backend[Backend Services]
+    livekit[LiveKit SFU]
+    postgres[(PostgreSQL)]
+
+    frontend --> gateway
+    gateway --> backend
+    frontend --> livekit
+    backend --> livekit
+    backend --> postgres
