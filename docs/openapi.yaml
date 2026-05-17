@@ -752,7 +752,7 @@ components:
           example: livekit
         livekitUrl:
           type: string
-          example: ws://localhost:8080/livekit
+          example: ws://localhost:7880
         token:
           type: string
           example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...

@@ -12,18 +12,18 @@ The prototype avoids Kafka because the system requirements are mostly synchronou
 
 ```text
 Browser Client: React + TypeScript + LiveKit client
-  -> Go Backend: REST API, SSE/WebSocket gateway, LiveKit token issuer
-  -> LiveKit SFU: WebRTC audio/video
+  -> nginx: web application, REST API and SSE
+  -> LiveKit SFU: public signaling and WebRTC audio/video
 
 Go Backend
   -> PostgreSQL: users, rooms, messages, participants, calls
   -> LiveKit API: room/token management
 
 LiveKit SFU
-  -> optional embedded TURN: relay for restrictive NAT/firewall cases
+  -> exposed media ports for WebRTC
 ```
 
-The current repository implements `Browser Client -> Go Backend -> PostgreSQL`, SQL migrations, LiveKit token issuing and browser-side LiveKit connection. If LiveKit is not running, the UI falls back to local camera/microphone preview.
+The current repository implements `Browser Client -> nginx -> Go Backend -> PostgreSQL`, SQL migrations, LiveKit token issuing and browser-side LiveKit connection. LiveKit is not proxied through nginx in the server deployment; browsers connect to the public LiveKit signaling URL returned by the Media API. If LiveKit is not running, the UI falls back to local camera/microphone preview.
 
 ## Domains
 

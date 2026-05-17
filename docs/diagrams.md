@@ -26,8 +26,10 @@ This diagram shows the implementation composition:
 - gateway: nginx as API Gateway / Reverse Proxy;
 - backend API: Auth API, Rooms API, Participants API, Messages API, Realtime API and Media API;
 - backend services: Auth, Room, Participant, Chat, Realtime Event and Media Control services;
-- media plane: LiveKit SFU, with optional embedded TURN for restrictive networks;
+- media plane: LiveKit SFU for public signaling and WebRTC media;
 - storage: PostgreSQL.
+
+In the current deployment, nginx proxies only the web application, REST API and SSE. LiveKit is exposed as a separate media service, and the browser connects to it directly using the `livekitUrl` returned by the Media API.
 
 ## Data Schema
 
