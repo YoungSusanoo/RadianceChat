@@ -1,5 +1,7 @@
 # Radiance Architecture
 
+Report-ready diagrams are collected in [`docs/diagrams.md`](diagrams.md): high-level design, low-level design and data schema. Non-functional requirement compliance is described in [`docs/nfr-compliance.md`](nfr-compliance.md).
+
 ## Decision
 
 Use Go for the backend and keep the first implementation as a modular monolith.
@@ -9,21 +11,19 @@ The prototype avoids Kafka because the system requirements are mostly synchronou
 ## Containers
 
 ```text
-Browser Client
+Browser Client: React + TypeScript + LiveKit client
   -> Go Backend: REST API, SSE/WebSocket gateway, LiveKit token issuer
   -> LiveKit SFU: WebRTC audio/video
 
 Go Backend
   -> PostgreSQL: users, rooms, messages, participants, calls
-  -> Redis: sessions, room presence, pub/sub for realtime events
   -> LiveKit API: room/token management
 
 LiveKit SFU
-  -> Redis: SFU cluster coordination
-  -> coturn: TURN relay for NAT/firewall cases
+  -> optional embedded TURN: relay for restrictive NAT/firewall cases
 ```
 
-The current repository implements `Browser Client -> Go Backend`, local JSON persistence for the prototype, LiveKit token issuing and browser-side LiveKit connection. If LiveKit is not running, the UI falls back to local camera/microphone preview.
+The current repository implements `Browser Client -> Go Backend -> PostgreSQL`, SQL migrations, LiveKit token issuing and browser-side LiveKit connection. If LiveKit is not running, the UI falls back to local camera/microphone preview.
 
 ## Domains
 
@@ -56,12 +56,10 @@ The system should prefer availability for realtime interaction. Strong consisten
 
 ## Scaling Path
 
-1. Replace prototype JSON persistence with PostgreSQL.
-2. Replace in-process sessions and event broker with Redis.
-3. Replace SSE with WebSocket for bidirectional realtime control.
-4. Add LiveKit SFU and coturn for real audio/video across clients.
-5. Add multiple Go backend replicas behind a load balancer.
-6. Add Kafka/Redpanda only for durable asynchronous events.
+1. Replace SSE with WebSocket for bidirectional realtime control.
+2. Add Redis Pub/Sub for room presence and realtime fan-out across multiple Go replicas.
+3. Add multiple Go backend replicas behind a load balancer.
+4. Add Kafka/Redpanda only for durable asynchronous events.
 
 ## Load Testing Strategy
 
@@ -73,7 +71,7 @@ The system should prefer availability for realtime interaction. Strong consisten
 ## Bottlenecks and Workarounds
 
 - SFU bandwidth: shard rooms across LiveKit nodes and use simulcast/adaptive stream.
-- NAT/firewall failures: provide coturn and monitor TURN relay bandwidth.
-- Presence fan-out: move from in-process broker to Redis Pub/Sub.
+- NAT/firewall failures: enable LiveKit TURN when LAN/media tests show direct ICE is not enough.
+- Presence fan-out: move from in-process broker to Redis Pub/Sub when backend replicas are introduced.
 - Hot rooms: cap participants at 15 according to requirements, then introduce multiple SFU nodes for larger meetings.
-- Chat write bursts: batch writes or use Redis queue before PostgreSQL.
+- Chat write bursts: keep PostgreSQL writes direct for the course prototype; add queueing only if load tests show it is needed.

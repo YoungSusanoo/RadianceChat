@@ -315,7 +315,7 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{
 			"mode":       "livekit",
-			"livekitUrl": s.cfg.LiveKitURL,
+			"livekitUrl": s.publicLiveKitURL(r),
 			"token":      token,
 		})
 	case len(parts) == 3 && parts[1] == "participants":

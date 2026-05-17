@@ -28,7 +28,7 @@ flowchart TB
 
     subgraph Media["Media Plane"]
         livekit[LiveKit SFU]
-        coturn[coturn TURN]
+        turn[Optional embedded TURN]
     end
 
     subgraph Storage["Storage"]
@@ -37,7 +37,7 @@ flowchart TB
 
     web --> nginx
     lkClient --> nginx
-    lkClient -.-> coturn
+    lkClient -.-> turn
 
     nginx --> authApi
     nginx --> roomsApi
@@ -66,4 +66,4 @@ flowchart TB
     chatService --> realtimeService
 
     mediaService --> livekit
-    livekit -.-> coturn
+    livekit -.-> turn

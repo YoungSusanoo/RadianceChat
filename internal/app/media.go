@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -25,6 +26,32 @@ func (s *Server) mediaToken(roomID string, user User) (string, error) {
 		return "", ErrForbidden
 	}
 	return signLiveKitToken(s.cfg.LiveKitAPIKey, s.cfg.LiveKitAPISecret, roomID, user)
+}
+
+func (s *Server) publicLiveKitURL(r *http.Request) string {
+	if url := strings.TrimSpace(s.cfg.LiveKitURL); url != "" {
+		return url
+	}
+
+	proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+
+	scheme := "ws"
+	if proto == "https" {
+		scheme = "wss"
+	}
+
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	return scheme + "://" + host + "/livekit"
 }
 
 func signLiveKitToken(apiKey, apiSecret, roomID string, user User) (string, error) {

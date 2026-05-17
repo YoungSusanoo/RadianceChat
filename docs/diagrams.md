@@ -26,7 +26,7 @@ This diagram shows the implementation composition:
 - gateway: nginx as API Gateway / Reverse Proxy;
 - backend API: Auth API, Rooms API, Participants API, Messages API, Realtime API and Media API;
 - backend services: Auth, Room, Participant, Chat, Realtime Event and Media Control services;
-- media plane: LiveKit SFU and coturn TURN;
+- media plane: LiveKit SFU, with optional embedded TURN for restrictive networks;
 - storage: PostgreSQL.
 
 ## Data Schema
