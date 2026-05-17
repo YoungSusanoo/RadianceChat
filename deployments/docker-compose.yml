@@ -61,8 +61,6 @@ services:
     image: livekit/livekit-server:latest
     network_mode: host
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:?LIVEKIT_NODE_IP is required for server deployment}"]
-    environment:
-      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 
