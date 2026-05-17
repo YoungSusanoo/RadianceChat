@@ -51,7 +51,27 @@ func (s *Server) publicLiveKitURL(r *http.Request) string {
 	if host == "" {
 		host = r.Host
 	}
+	if isInternalHost(host) {
+		if forwarded := firstForwardedHost(r.Header.Get("Forwarded")); forwarded != "" {
+			host = forwarded
+		}
+	}
 	return scheme + "://" + host + "/livekit"
+}
+
+func isInternalHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(strings.Split(host, ":")[0]))
+	return host == "app" || host == "livekit" || strings.HasSuffix(host, ".internal")
+}
+
+func firstForwardedHost(header string) string {
+	for _, part := range strings.Split(header, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "host") {
+			return strings.Trim(strings.TrimSpace(value), `"`)
+		}
+	}
+	return ""
 }
 
 func signLiveKitToken(apiKey, apiSecret, roomID string, user User) (string, error) {
