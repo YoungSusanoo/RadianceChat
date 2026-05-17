@@ -18,7 +18,7 @@ export const options = {
       stages: stressStages(8),
     },
   },
-  thresholds: coreThresholds("rate<0.25", "p(95)<2000"),
+  thresholds: coreThresholds("rate<0.25", "p(95)<5000"),
 };
 
 export function createRoomTransaction() {

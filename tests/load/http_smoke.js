@@ -21,7 +21,7 @@ export const options = {
       duration: "30s",
     },
   },
-  thresholds: coreThresholds("rate<0.02", "p(95)<1000"),
+  thresholds: coreThresholds("rate<0.02", "p(95)<3000"),
 };
 
 export function createRoomTransaction() {

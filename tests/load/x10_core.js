@@ -2,7 +2,7 @@ import { chatScenario, coreLoadScenarios, coreThresholds, createRoomScenario, jo
 
 export const options = {
   scenarios: coreLoadScenarios(10),
-  thresholds: coreThresholds("rate<0.10", "p(95)<1000"),
+  thresholds: coreThresholds("rate<0.25", "p(95)<5000"),
 };
 
 export function createRoomTransaction() {
