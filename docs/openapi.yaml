@@ -1,0 +1,774 @@
+openapi: 3.0.3
+info:
+  title: Radiance API
+  version: 1.0.0
+  description: REST and realtime API for the Radiance audio/video rooms prototype.
+servers:
+  - url: http://localhost:8080
+    description: Local Docker Compose through nginx reverse proxy
+
+tags:
+  - name: Health
+  - name: Auth
+  - name: Rooms
+  - name: Invites
+  - name: Participants
+  - name: Chat
+  - name: Realtime
+  - name: Media
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      security: []
+      responses:
+        "200":
+          description: Application is ready to serve traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "503":
+          description: Application is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      security: []
+      responses:
+        "200":
+          description: Metrics text
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: User authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current session
+      responses:
+        "200":
+          description: Session removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/rooms:
+    get:
+      tags: [Rooms]
+      summary: List public active rooms
+      responses:
+        "200":
+          description: Public rooms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublicRoom"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Rooms]
+      summary: Create a room
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoomRequest"
+      responses:
+        "201":
+          description: Room created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomPayload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/rooms/{roomId}:
+    get:
+      tags: [Rooms]
+      summary: Get room details and participants
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: Room details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomPayload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/rooms/{roomId}/join:
+    post:
+      tags: [Rooms]
+      summary: Join a public room
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: Joined room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomPayload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/rooms/{roomId}/leave:
+    post:
+      tags: [Rooms]
+      summary: Leave a room
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: Left room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomPayload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/rooms/{roomId}/end:
+    post:
+      tags: [Rooms]
+      summary: End a room for all participants
+      description: Host-only action.
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: Room ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/rooms/{roomId}/device:
+    patch:
+      tags: [Participants]
+      summary: Update current participant device state
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceStateRequest"
+      responses:
+        "200":
+          description: Updated participant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Participant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/rooms/{roomId}/participants/{userId}:
+    post:
+      tags: [Participants]
+      summary: Mute a participant
+      description: Host-only action.
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: Muted participant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Participant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Participants]
+      summary: Kick a participant
+      description: Host-only action.
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: Removed participant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Participant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/rooms/{roomId}/messages:
+    get:
+      tags: [Chat]
+      summary: Get room message history
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Chat]
+      summary: Send a chat message
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "201":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/rooms/{roomId}/events:
+    get:
+      tags: [Realtime]
+      summary: Subscribe to room events
+      description: Server-Sent Events stream. The access token may be passed as a query parameter because browser EventSource cannot set Authorization headers.
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - name: access_token
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: participant.joined
+                  data: {"type":"participant.joined","data":{},"at":"2026-05-17T00:00:00Z"}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/rooms/{roomId}/media-token:
+    post:
+      tags: [Media]
+      summary: Issue LiveKit media token
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: LiveKit connection data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/invites/{inviteToken}:
+    get:
+      tags: [Invites]
+      summary: Resolve invite token
+      parameters:
+        - $ref: "#/components/parameters/InviteToken"
+      responses:
+        "200":
+          description: Room referenced by invite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/invites/{inviteToken}/join:
+    post:
+      tags: [Invites]
+      summary: Join a room by invite token
+      parameters:
+        - $ref: "#/components/parameters/InviteToken"
+      responses:
+        "200":
+          description: Joined room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomPayload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-token
+
+  parameters:
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: room_123
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: user_123
+    InviteToken:
+      name: inviteToken
+      in: path
+      required: true
+      schema:
+        type: string
+      example: invite_123
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+          example: Alice
+        email:
+          type: string
+          format: email
+          example: alice@example.com
+        password:
+          type: string
+          format: password
+          minLength: 4
+          example: test1234
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: alice@example.com
+        password:
+          type: string
+          format: password
+          example: test1234
+
+    CreateRoomRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: Daily call
+        description:
+          type: string
+          example: Team sync
+        visibility:
+          type: string
+          enum: [public, private]
+          default: public
+          example: public
+
+    DeviceStateRequest:
+      type: object
+      required: [muted, cameraOn]
+      properties:
+        muted:
+          type: boolean
+          example: true
+        cameraOn:
+          type: boolean
+          example: false
+
+    SendMessageRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          example: Hello everyone
+
+    AuthResponse:
+      type: object
+      required: [user, token]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        token:
+          type: string
+          example: 2e9f7d2b4e8a4f0fa2d4c7
+
+    RoomPayload:
+      type: object
+      required: [room, participants]
+      properties:
+        room:
+          $ref: "#/components/schemas/Room"
+        participant:
+          $ref: "#/components/schemas/Participant"
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Participant"
+
+    User:
+      type: object
+      required: [id, name, email, createdAt]
+      properties:
+        id:
+          type: string
+          example: user_123
+        name:
+          type: string
+          example: Alice
+        email:
+          type: string
+          format: email
+          example: alice@example.com
+        createdAt:
+          type: string
+          format: date-time
+
+    Room:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - visibility
+        - hostId
+        - inviteToken
+        - active
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: room_123
+        name:
+          type: string
+          example: Daily call
+        description:
+          type: string
+          example: Team sync
+        visibility:
+          type: string
+          enum: [public, private]
+          example: public
+        hostId:
+          type: string
+          example: user_123
+        inviteToken:
+          type: string
+          example: invite_123
+        active:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+
+    PublicRoom:
+      allOf:
+        - $ref: "#/components/schemas/Room"
+        - type: object
+          required: [participants]
+          properties:
+            participants:
+              type: integer
+              minimum: 0
+              example: 3
+
+    Participant:
+      type: object
+      required:
+        - roomId
+        - userId
+        - name
+        - role
+        - muted
+        - cameraOn
+        - joinedAt
+        - lastSeen
+        - connected
+      properties:
+        roomId:
+          type: string
+          example: room_123
+        userId:
+          type: string
+          example: user_123
+        name:
+          type: string
+          example: Alice
+        role:
+          type: string
+          enum: [host, participant]
+          example: host
+        muted:
+          type: boolean
+          example: true
+        cameraOn:
+          type: boolean
+          example: false
+        joinedAt:
+          type: string
+          format: date-time
+        lastSeen:
+          type: string
+          format: date-time
+        connected:
+          type: boolean
+          example: true
+
+    Message:
+      type: object
+      required: [id, roomId, userId, userName, text, createdAt]
+      properties:
+        id:
+          type: string
+          example: msg_123
+        roomId:
+          type: string
+          example: room_123
+        userId:
+          type: string
+          example: user_123
+        userName:
+          type: string
+          example: Alice
+        text:
+          type: string
+          example: Hello everyone
+        createdAt:
+          type: string
+          format: date-time
+
+    MediaToken:
+      type: object
+      required: [mode, livekitUrl, token]
+      properties:
+        mode:
+          type: string
+          enum: [livekit]
+          example: livekit
+        livekitUrl:
+          type: string
+          example: ws://localhost:8080/livekit
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: forbidden
