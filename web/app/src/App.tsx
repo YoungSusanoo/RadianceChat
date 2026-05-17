@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ChatPanel } from "./components/ChatPanel";
 import { MeetingStage } from "./components/MeetingStage";
@@ -26,16 +26,8 @@ export function App() {
 
   const currentRoomId = room?.id || "";
 
-  const eventSource = useMemo(() => {
-    if (!currentRoomId || !tokenStore.get()) return null;
-    return new EventSource(eventSourceUrl(currentRoomId));
-  }, [currentRoomId]);
-
   useEffect(() => {
     bootstrap();
-    return () => {
-      eventSource?.close();
-    };
   }, []);
 
   useEffect(() => {
@@ -45,9 +37,41 @@ export function App() {
   }, [toast]);
 
   useEffect(() => {
-    if (!eventSource) return;
-    const refresh = () => refreshRoom().catch((error) => console.warn("room refresh failed", error));
+    if (!user) return;
+    const timer = window.setInterval(() => {
+      refreshRooms().catch((error) => console.warn("rooms refresh failed", error));
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!currentRoomId || !tokenStore.get()) return;
+    const eventSource = new EventSource(eventSourceUrl(currentRoomId));
+    const sync = () => syncRoom(currentRoomId).catch((error) => console.warn("room sync failed", error));
+    const syncRooms = () => refreshRooms().catch((error) => console.warn("rooms refresh failed", error));
     const parsePayload = <T,>(event: MessageEvent) => JSON.parse(event.data) as RoomEvent<T>;
+    const upsertParticipant = (participant: Participant) => {
+      setParticipants((items) => {
+        const exists = items.some((item) => item.userId === participant.userId);
+        if (!exists) return [...items, participant];
+        return items.map((item) => item.userId === participant.userId ? participant : item);
+      });
+    };
+    const removeParticipant = (participant: Participant) => {
+      setParticipants((items) => items.filter((item) => item.userId !== participant.userId));
+    };
+    const onParticipantChanged = (event: MessageEvent) => {
+      const payload = parsePayload<Participant>(event);
+      if (payload.data?.userId) upsertParticipant(payload.data);
+      sync();
+      syncRooms();
+    };
+    const onParticipantLeft = (event: MessageEvent) => {
+      const payload = parsePayload<Participant>(event);
+      if (payload.data?.userId) removeParticipant(payload.data);
+      sync();
+      syncRooms();
+    };
     const onMessage = (event: MessageEvent) => {
       const payload = parsePayload<Message>(event);
       if (!payload.data?.id) return;
@@ -55,10 +79,11 @@ export function App() {
     };
     const onMuted = (event: MessageEvent) => {
       const payload = parsePayload<Participant>(event);
-      if (payload.data?.userId === user?.id && room?.id) {
-        controller.setMic(room.id, false).catch((error) => console.warn("forced mute failed", error));
+      if (payload.data?.userId) upsertParticipant(payload.data);
+      if (payload.data?.userId === user?.id) {
+        controller.setMic(currentRoomId, false).catch((error) => console.warn("forced mute failed", error));
       }
-      refresh();
+      sync();
     };
     const onKicked = (event: MessageEvent) => {
       const payload = parsePayload<Participant>(event);
@@ -68,22 +93,25 @@ export function App() {
         refreshRooms().catch((error) => console.warn("rooms refresh failed", error));
         return;
       }
-      refresh();
+      if (payload.data?.userId) removeParticipant(payload.data);
+      sync();
+      syncRooms();
     };
     const onEnded = () => {
       setToast("Комната завершена");
       closeRoomState();
+      syncRooms();
     };
-    for (const type of ["participant.joined", "participant.left", "participant.device_changed"]) {
-      eventSource.addEventListener(type, refresh);
-    }
+    eventSource.addEventListener("participant.joined", onParticipantChanged);
+    eventSource.addEventListener("participant.device_changed", onParticipantChanged);
+    eventSource.addEventListener("participant.left", onParticipantLeft);
     eventSource.addEventListener("participant.muted", onMuted);
     eventSource.addEventListener("participant.kicked", onKicked);
     eventSource.addEventListener("chat.message", onMessage);
     eventSource.addEventListener("room.ended", onEnded);
     eventSource.onerror = () => console.warn("Realtime stream interrupted; browser will retry.");
     return () => eventSource.close();
-  }, [controller, eventSource, room?.id, user?.id]);
+  }, [controller, currentRoomId, user?.id]);
 
   async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
     setBusy(true);
@@ -118,7 +146,12 @@ export function App() {
 
   async function refreshRoom() {
     if (!room) return;
-    const payload = await api.room(room.id);
+    await syncRoom(room.id);
+  }
+
+  async function syncRoom(roomId: string) {
+    const payload = await api.room(roomId);
+    if (room?.id && room.id !== roomId) return;
     setRoom(payload.room);
     setParticipants(normalize(payload.participants));
   }

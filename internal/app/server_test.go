@@ -67,6 +67,57 @@ func TestHappyPath(t *testing.T) {
 	}
 }
 
+func TestEventsRequireRoomParticipant(t *testing.T) {
+	server := NewServer(Config{StaticDir: "../../web/static"}, slog.Default())
+	handler := server.Routes()
+
+	hostRegister := post(t, handler, "/api/v1/auth/register", "", map[string]string{
+		"name":     "Host",
+		"email":    "host@example.com",
+		"password": "test1234",
+	})
+	var hostAuth struct {
+		Token string `json:"token"`
+		User  User   `json:"user"`
+	}
+	decodeTest(t, hostRegister, &hostAuth)
+
+	guestRegister := post(t, handler, "/api/v1/auth/register", "", map[string]string{
+		"name":     "Guest",
+		"email":    "guest@example.com",
+		"password": "test1234",
+	})
+	var guestAuth struct {
+		Token string `json:"token"`
+		User  User   `json:"user"`
+	}
+	decodeTest(t, guestRegister, &guestAuth)
+
+	createRoom := post(t, handler, "/api/v1/rooms", hostAuth.Token, map[string]string{
+		"name":       "SSE room",
+		"visibility": "public",
+	})
+	var roomPayload struct {
+		Room Room `json:"room"`
+	}
+	decodeTest(t, createRoom, &roomPayload)
+
+	guestEvents := get(t, handler, "/api/v1/rooms/"+roomPayload.Room.ID+"/events", guestAuth.Token)
+	if guestEvents.Code != http.StatusForbidden {
+		t.Fatalf("guest events status = %d, body = %s", guestEvents.Code, guestEvents.Body.String())
+	}
+
+	leave := post(t, handler, "/api/v1/rooms/"+roomPayload.Room.ID+"/leave", hostAuth.Token, map[string]string{})
+	if leave.Code != http.StatusOK {
+		t.Fatalf("leave status = %d, body = %s", leave.Code, leave.Body.String())
+	}
+
+	hostEventsAfterLeave := get(t, handler, "/api/v1/rooms/"+roomPayload.Room.ID+"/events", hostAuth.Token)
+	if hostEventsAfterLeave.Code != http.StatusForbidden {
+		t.Fatalf("host events after leave status = %d, body = %s", hostEventsAfterLeave.Code, hostEventsAfterLeave.Body.String())
+	}
+}
+
 func post(t *testing.T, handler http.Handler, path, token string, payload interface{}) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(payload)

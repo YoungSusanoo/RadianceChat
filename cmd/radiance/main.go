@@ -9,20 +9,34 @@ import (
 	"time"
 
 	"radiance/internal/app"
+	"radiance/internal/storage/postgres"
 )
 
 func main() {
 	cfg := app.Config{
 		Addr:             env("RADIANCE_ADDR", ":8080"),
 		StaticDir:        env("RADIANCE_STATIC_DIR", "web/app/dist"),
-		DataFile:         env("RADIANCE_DATA_FILE", "data/radiance.json"),
 		LiveKitURL:       env("LIVEKIT_URL", "ws://localhost:7880"),
 		LiveKitAPIKey:    env("LIVEKIT_API_KEY", "devkey"),
 		LiveKitAPISecret: env("LIVEKIT_API_SECRET", "secret"),
 	}
+	databaseURL := env("DATABASE_URL", "postgres://radiance:radiance@localhost:5432/radiance?sslmode=disable")
+	migrationsDir := env("RADIANCE_MIGRATIONS_DIR", "migrations")
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	server := app.NewServer(cfg, logger)
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
+	if err := postgres.Migrate(startupCtx, databaseURL, migrationsDir); err != nil {
+		logger.Error("database migration failed", "error", err)
+		os.Exit(1)
+	}
+	store, err := postgres.Open(startupCtx, databaseURL)
+	if err != nil {
+		logger.Error("database connection failed", "error", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+	server := app.NewServerWithStore(cfg, logger, store)
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

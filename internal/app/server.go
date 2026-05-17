@@ -271,7 +271,7 @@ func (s *Server) roomSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.broker.Publish(roomID, "chat.message", msg)
 		writeJSON(w, http.StatusCreated, msg)
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[1] == "events":
-		s.streamEvents(w, r, roomID)
+		s.streamEvents(w, r, roomID, user)
 	case r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "media-token":
 		token, err := s.mediaToken(roomID, user)
 		if err != nil {
@@ -348,7 +348,12 @@ func (s *Server) inviteSubroutes(w http.ResponseWriter, r *http.Request) {
 	writeError(w, ErrNotFound)
 }
 
-func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, roomID string) {
+func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, roomID string, user User) {
+	if !s.store.IsParticipant(roomID, user.ID) {
+		writeError(w, ErrForbidden)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -367,14 +372,37 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, roomID str
 		case <-r.Context().Done():
 			return
 		case event := <-ch:
+			deliver, closeStream := s.canDeliverRoomEvent(roomID, user.ID, event)
+			if !deliver {
+				return
+			}
 			payload, _ := json.Marshal(event)
 			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, payload)
 			flusher.Flush()
+			if closeStream {
+				return
+			}
 		case <-time.After(25 * time.Second):
+			if !s.store.IsParticipant(roomID, user.ID) {
+				return
+			}
 			_, _ = fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) canDeliverRoomEvent(roomID, userID string, event realtime.Event) (bool, bool) {
+	if participant, ok := event.Data.(Participant); ok && participant.UserID == userID {
+		switch event.Type {
+		case "participant.left", "participant.kicked":
+			return true, true
+		}
+	}
+	if !s.store.IsParticipant(roomID, userID) {
+		return false, true
+	}
+	return true, false
 }
 
 func (s *Server) user(r *http.Request) (User, error) {
