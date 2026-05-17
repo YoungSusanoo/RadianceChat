@@ -5,13 +5,9 @@ services:
       - "0.0.0.0:8080:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       app:
         condition: service_healthy
-      livekit:
-        condition: service_started
     networks:
       - edge
 
@@ -26,10 +22,10 @@ services:
       RADIANCE_STATIC_DIR: "/app/web"
       RADIANCE_MIGRATIONS_DIR: "/app/migrations"
       DATABASE_URL: "postgres://radiance:radiance@postgres:5432/radiance?sslmode=disable"
-      LIVEKIT_URL: "${LIVEKIT_URL:-}"
+      LIVEKIT_URL: "${LIVEKIT_URL:?LIVEKIT_URL is required for server deployment}"
       LIVEKIT_API_URL: "http://host.docker.internal:7880"
       LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-devkey}"
-      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-secret}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required for server deployment}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -61,6 +57,8 @@ services:
     image: livekit/livekit-server:latest
     network_mode: host
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:?LIVEKIT_NODE_IP is required for server deployment}"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required for server deployment}"
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 
